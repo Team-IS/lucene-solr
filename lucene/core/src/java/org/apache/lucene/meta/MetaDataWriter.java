@@ -5,7 +5,7 @@ import java.io.File;
 import java.io.FileWriter;
 
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LiveIndexWriterConfig;
 import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.util.Version;
 
@@ -20,11 +20,11 @@ import org.apache.lucene.util.Version;
 public class MetaDataWriter {
 
 	/**
-	 * An IndexWriterConfig object , that will be used
+	 * An LiveIndexWriterConfig object , that will be used
 	 * in order to get the information about the utils
 	 * that were used during index time.
 	 */
-	private IndexWriterConfig iwc;
+	private LiveIndexWriterConfig liwc;
 	
 	/**
 	 * The path of the xml file that will be created and 
@@ -48,31 +48,31 @@ public class MetaDataWriter {
 	/**
 	 * Overloaded Constructor.
 	 * 
-	 * @param iwc The IndexWriterConfig object that will be used.
+	 * @param liwc The LiveIndexWriterConfig object that will be used.
 	 */
-	public MetaDataWriter(IndexWriterConfig iwc) {
-		this(iwc , "");
+	public MetaDataWriter(LiveIndexWriterConfig liwc) {
+		this(liwc , "/");
 	}
 	
 	/**
 	 * Overloaded Constructor.
 	 * 
-	 * @param iwc The IndexWriterConfig object that will be used.
+	 * @param liwc The LiveIndexWriterConfig object that will be used.
 	 * @param path The path of the xml file.
 	 */
-	public MetaDataWriter(IndexWriterConfig iwc , String path) {
-		this.iwc = iwc;
+	public MetaDataWriter(LiveIndexWriterConfig liwc , String path) {
+		this.liwc = liwc;
 		this.filePath = path;
 	}
 	
 	/**
-	 * Sets the IndexWriterConfig object , to the one
+	 * Sets the LiveIndexWriterConfig object , to the one
 	 * given as parameter.
 	 * 
-	 * @param iwc The new IndexWriterConfig object.
+	 * @param liwc The new LiveIndexWriterConfig object.
 	 */
-	public void setIwc(IndexWriterConfig iwc) {
-		this.iwc = iwc;
+	public void setIwc(LiveIndexWriterConfig liwc) {
+		this.liwc = liwc;
 	}
 	
 	/**
@@ -93,13 +93,13 @@ public class MetaDataWriter {
 	public void writeMetaData() {
 		
 		//Get the analyzer.
-		Analyzer analyzer = iwc.getAnalyzer();
+		Analyzer analyzer = liwc.getAnalyzer();
 		
 		//Get the similarity.
-		Similarity similarity = iwc.getSimilarity();
+		Similarity similarity = liwc.getSimilarity();
 		
 		//Get the version.
-		Version version = iwc.getVersion();
+		Version version = liwc.getVersion();
 		
 		//Create the final file path.
 		String path = filePath+fileName;
