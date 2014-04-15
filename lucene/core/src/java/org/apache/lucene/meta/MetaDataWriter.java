@@ -42,7 +42,7 @@ public class MetaDataWriter {
 	 * Default constructor.
 	 */
 	public MetaDataWriter() {
-		this(null , "/");
+		this(null , "");
 	}
 	
 	/**
@@ -51,7 +51,7 @@ public class MetaDataWriter {
 	 * @param liwc The LiveIndexWriterConfig object that will be used.
 	 */
 	public MetaDataWriter(LiveIndexWriterConfig liwc) {
-		this(liwc , "/");
+		this(liwc , "");
 	}
 	
 	/**
