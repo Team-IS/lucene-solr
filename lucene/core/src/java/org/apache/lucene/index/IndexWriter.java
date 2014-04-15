@@ -41,6 +41,7 @@ import org.apache.lucene.index.FieldInfo.DocValuesType;
 import org.apache.lucene.index.FieldInfos.FieldNumbers;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.index.MergeState.CheckAbort;
+import org.apache.lucene.meta.MetaDataWriter;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.CompoundFileDirectory;
@@ -804,6 +805,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit{
         writeLock = null;
       }
     }
+    
+    //Write index metadata to an xml file.
+    MetaDataWriter mdw = new MetaDataWriter(config);
+    mdw.writeMetaData();
   }
 
   /**
