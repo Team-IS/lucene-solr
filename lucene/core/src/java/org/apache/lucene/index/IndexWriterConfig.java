@@ -478,6 +478,11 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig implements Cl
   }
   
   @Override
+  public Version getVersion() {
+	  return super.getVersion();
+  }
+  
+  @Override
   public int getMaxBufferedDeleteTerms() {
     return super.getMaxBufferedDeleteTerms();
   }

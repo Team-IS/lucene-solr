@@ -158,6 +158,11 @@ public class LiveIndexWriterConfig {
   public Analyzer getAnalyzer() {
     return analyzer;
   }
+  
+  /** Returns the version of Lucene that was used for indexing. */
+  public Version getVersion() {
+	  return matchVersion;
+  }
 
   /**
    * Determines the maximum number of delete-by-term operations that will be
