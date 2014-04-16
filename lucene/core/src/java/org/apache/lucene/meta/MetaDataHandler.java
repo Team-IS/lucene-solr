@@ -58,7 +58,7 @@ public class MetaDataHandler extends DefaultHandler {
 	}
 	
 	@Override
-    public void startElement(String uri , String localName , String qName , Attributes atts) throws SAXException {
+    	public void startElement(String uri , String localName , String qName , Attributes atts) throws SAXException {
            
 		if(qName.equals("uses-version")) {
 			this.parsingVersion = true;
