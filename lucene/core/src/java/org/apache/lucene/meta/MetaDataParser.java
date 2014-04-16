@@ -3,19 +3,16 @@ package org.apache.lucene.meta;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
+/**
+ * This class is responsible for initializing the parsing process.
+ *
+ */
 public class MetaDataParser {
 	
 	/**
-	 * The path of the xml file that will be created and 
-	 * will hold the information. 
+	 * The location where the xml file exists. 
 	 */
 	private String filePath;
-	
-	/**
-	 * The name of the xml file that will keep the 
-	 * meta-data information.
-	 */
-	private static final String fileName = "metadata.xml";
 	
 	/**
 	 * Default Constructor.
@@ -39,10 +36,9 @@ public class MetaDataParser {
 			SAXParserFactory factory = SAXParserFactory.newInstance();
 			SAXParser saxParser = factory.newSAXParser(); 
 			MetaDataHandler handler = new MetaDataHandler();
-        
-			String finalPath = this.filePath + fileName;
+			
 			//Parse xml file
-			saxParser.parse(finalPath, handler);
+			saxParser.parse(this.filePath, handler);
 			
 			return handler.getMetaData();
 		}
