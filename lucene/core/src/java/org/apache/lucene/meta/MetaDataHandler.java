@@ -48,6 +48,15 @@ public class MetaDataHandler extends DefaultHandler {
 		this.parsingVersion = false;
 	}
 	
+	/**
+	 *  Gets the metadata array.
+	 *  
+	 *  @return metadata An array that contains the metadata.
+	 */
+	public String[] getMetaData() {
+		return this.metadata;
+	}
+	
     @Override
     public void startElement(String uri , String localName , String qName , Attributes atts) throws SAXException {
            
