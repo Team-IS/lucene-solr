@@ -57,7 +57,7 @@ public class MetaDataHandler extends DefaultHandler {
 		return this.metadata;
 	}
 	
-    @Override
+	@Override
     public void startElement(String uri , String localName , String qName , Attributes atts) throws SAXException {
            
 		if(qName.equals("uses-version")) {
@@ -77,15 +77,15 @@ public class MetaDataHandler extends DefaultHandler {
 	public void characters(char ch[], int start, int length) throws SAXException {
     	
 		if(this.parsingVersion) {
-			this.metadata[0] = new String(ch,start,length);
+			this.metadata[0] = new String(ch,start,length).trim();
 		}
     	
 		else if(this.parsingAnalyzer) {
-			this.metadata[1] = new String(ch,start,length);
+			this.metadata[1] = new String(ch,start,length).trim();
 		}
     	
 		else if(this.parsingSimilarity) {
-			this.metadata[2] = new String(ch,start,length);
+			this.metadata[2] = new String(ch,start,length).trim();
 		}
 	}
 
