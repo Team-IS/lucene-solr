@@ -48,6 +48,7 @@ import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.store.NIOFSDirectory;    // javadoc
 import org.apache.lucene.util.ThreadInterruptedException;
 import org.apache.lucene.index.IndexWriter; // javadocs
+import org.apache.lucene.meta.MetaDataReader;
 
 /** Implements search over a single IndexReader.
  *
@@ -90,6 +91,14 @@ public class IndexSearcher {
 
   // the default Similarity
   private static final Similarity defaultSimilarity = new DefaultSimilarity();
+  
+  // The reader responsible for reading the metadata xml file 
+  // containing information about the utils used during indexing.
+  protected MetaDataReader metaReader;
+  
+  // True if the metadata does not match and the warning message
+  // has already been displayed.
+  private boolean warningShown;
   
   /**
    * Expert: returns a default Similarity instance.
@@ -148,6 +157,8 @@ public class IndexSearcher {
     this.readerContext = context;
     leafContexts = context.leaves();
     this.leafSlices = executor == null ? null : slices(leafContexts);
+    this.warningShown = false;
+    this.metaReader = new MetaDataReader(this.similarity.toString(), "");
   }
 
   /**
@@ -459,6 +470,8 @@ public class IndexSearcher {
       final ScoreDoc[] scoreDocs = new ScoreDoc[hq.size()];
       for (int i = hq.size() - 1; i >= 0; i--) // put docs in array
         scoreDocs[i] = hq.pop();
+      
+      if(!this.warningShown) metaDataCompatibility();
 
       return new TopDocs(totalHits, scoreDocs, maxScore);
     }
@@ -905,5 +918,20 @@ public class IndexSearcher {
       sumDocFreq = terms.getSumDocFreq();
     }
     return new CollectionStatistics(field, reader.maxDoc(), docCount, sumTotalTermFreq, sumDocFreq);
+  }
+  
+  /**
+   *  This method checks the if the version of Lucene and the analyzer
+   *  being used for searching match the ones used for indexing.
+   */
+  protected void metaDataCompatibility() {
+	  metaReader.readMetaData();
+	  
+	  if(!metaReader.usesSameSimilarity()) {
+		  System.err.println("WARNING: The similarity function used for searching is not the same with the one used for indexing. \n");
+		  System.err.println("Expected " + metaReader.getIndexSimilarity() + " but " + metaReader.getSearchSimilarity() + " is being used.\n"); 
+		  
+		  this.warningShown = true;
+	  }
   }
 }
