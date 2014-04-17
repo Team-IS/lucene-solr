@@ -131,7 +131,7 @@ public class MetaDataReader {
 	 * function used during searching. 
 	 */
 	public String getSearchSimilarity() {
-		return this.searchAnalyzer;
+		return this.searchSimilarity;
 	}
 	
 	/**

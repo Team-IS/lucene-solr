@@ -438,7 +438,8 @@ public class IndexSearcher {
    *         {@link BooleanQuery#getMaxClauseCount()} clauses.
    */
   protected TopDocs search(Weight weight, ScoreDoc after, int nDocs) throws IOException {
-    int limit = reader.maxDoc();
+    	
+	int limit = reader.maxDoc();
     if (limit == 0) {
       limit = 1;
     }
@@ -472,7 +473,9 @@ public class IndexSearcher {
       for (int i = hq.size() - 1; i >= 0; i--) // put docs in array
         scoreDocs[i] = hq.pop();
       
-      if(!this.warningShown) metaDataCompatibility();
+      if(!this.warningShown) {
+	    metaDataCompatibility();
+	  }
 
       return new TopDocs(totalHits, scoreDocs, maxScore);
     }
@@ -495,6 +498,11 @@ public class IndexSearcher {
     nDocs = Math.min(nDocs, limit);
     TopScoreDocCollector collector = TopScoreDocCollector.create(nDocs, after, !weight.scoresDocsOutOfOrder());
     search(leaves, weight, collector);
+	
+	if(!this.warningShown) {
+	   metaDataCompatibility();
+	}
+	
     return collector.topDocs();
   }
 
