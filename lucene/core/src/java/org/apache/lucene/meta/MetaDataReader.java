@@ -97,11 +97,58 @@ public class MetaDataReader {
 	 */
 	public MetaDataReader(String similarity , String analyzer , String version , String filepath) {
 		this.searchSimilarity = similarity;
-		this.searchAnalyzer = analyzer;
+		this.searchAnalyzer = normalizeAnalyzer(analyzer);
 		this.searchVersion = version;
 		this.filePath = filepath;
 	}
 	
+	/**
+	 * Returns a String representation of the version
+	 * used during indexing. 
+	 */
+	public String getIndexVersion() {
+		return this.indexVersion;
+	}
+	
+	/**
+	 * Returns a String representation of the version
+	 * used during searching. 
+	 */
+	public String getSearchVersion() {
+		return this.searchVersion;
+	}
+	
+	/**
+	 * Returns a String representation of the similarity 
+	 * function used during indexing.  
+	 */
+	public String getIndexSimilarity() {
+		return this.indexSimilarity;
+	}
+	
+	/**
+	 * Returns a String representation of the similarity 
+	 * function used during searching. 
+	 */
+	public String getSearchSimilarity() {
+		return this.searchAnalyzer;
+	}
+	
+	/**
+	 * Returns a String representation of the Analyzer 
+	 * used during indexing.  
+	 */
+	public String getIndexAnalyzer() {
+		return this.indexAnalyzer;
+	}
+	
+	/**
+	 * Returns a String representation of the Analyzer 
+	 * used during searching. 
+	 */
+	public String getSearchAnalyzer() {
+		return this.searchAnalyzer;
+	}
 	/**
 	 * Reads metadata information from the xml file.
 	 */
@@ -111,7 +158,7 @@ public class MetaDataReader {
 		String[] metadata = parser.parse();
 		
 		this.indexVersion = metadata[0];
-		this.indexAnalyzer = metadata[1];
+		this.indexAnalyzer = normalizeAnalyzer(metadata[1]);
 		this.indexSimilarity = metadata[2];
 	}
 	
@@ -133,13 +180,7 @@ public class MetaDataReader {
 	 * @return true if same analyzer
 	 * 		   false otherwise.
 	 */
-	public boolean usesSameAnalyzer() {
-		int index1 = this.indexAnalyzer.indexOf('@');
-		int index2 = this.searchAnalyzer.indexOf('@');
-		
-		this.indexAnalyzer = this.indexAnalyzer.substring(0, index1);
-		this.searchAnalyzer = this.searchAnalyzer.substring(0, index2);
-		
+	public boolean usesSameAnalyzer() {	
 		return this.indexAnalyzer.equals(searchAnalyzer);
 	}
 	
@@ -152,6 +193,25 @@ public class MetaDataReader {
 	 */
 	public boolean usesSameSimilarity() {
 		return this.indexSimilarity.equals(searchSimilarity);
+	}
+	
+	/**
+	 * The analyzer class and all of its subclasses does
+	 * not contain a custom toString() method. So every 
+	 * time we call the toString method, on an analyzer 
+	 * object, the result is a String that ends with a 
+	 * character '@' followed by a hexadecimal value.
+	 * 
+	 * This method will normalize the analyzer returned 
+	 * by removing the part that starts with '@' . 
+	 * 
+	 * @param analyzer The analyzer to be normalized.
+	 * @return the normalized analyzer.
+	 */
+	private String normalizeAnalyzer(String analyzer) {
+		int index = analyzer.indexOf('@');
+		
+		return analyzer.substring(0, index);
 	}
 	
 }
