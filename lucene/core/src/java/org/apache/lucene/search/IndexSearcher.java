@@ -220,6 +220,7 @@ public class IndexSearcher {
    */
   public void setSimilarity(Similarity similarity) {
     this.similarity = similarity;
+    this.metaReader = new MetaDataReader(this.similarity.toString(), "");
   }
 
   public Similarity getSimilarity() {
@@ -928,7 +929,7 @@ public class IndexSearcher {
 	  metaReader.readMetaData();
 	  
 	  if(!metaReader.usesSameSimilarity()) {
-		  System.err.println("WARNING: The similarity function used for searching is not the same with the one used for indexing. \n");
+		  System.err.println("WARNING: The similarity function used for searching is not the same with the one used for indexing.");
 		  System.err.println("Expected " + metaReader.getIndexSimilarity() + " but " + metaReader.getSearchSimilarity() + " is being used.\n"); 
 		  
 		  this.warningShown = true;
