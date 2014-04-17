@@ -114,12 +114,12 @@ public abstract class QueryParserBase extends QueryBuilder implements CommonQuer
 	  metaReader.readMetaData();
 	  
 	  if(!metaReader.usesSameVersion()) {
-		  System.err.println("WARNING: The version used for searching is not the same with the one used for indexing. \n");
+		  System.err.println("WARNING: The version used for searching is not the same with the one used for indexing.");
 		  System.err.println("Expected " + metaReader.getIndexVersion() + " but " + metaReader.getSearchVersion() + " is being used.\n");   
 	  }
 	  
 	  if (!metaReader.usesSameAnalyzer()) {
-		  System.err.println("WARNING: The analyzer used for searching is not the same with the one used for indexing. \n");
+		  System.err.println("WARNING: The analyzer used for searching is not the same with the one used for indexing.");
 		  System.err.println("Expected " + metaReader.getIndexAnalyzer() + " but " + metaReader.getSearchAnalyzer() + " is being used.\n");   
 	  }  
   }
