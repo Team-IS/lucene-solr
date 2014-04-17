@@ -211,7 +211,12 @@ public class MetaDataReader {
 	private String normalizeAnalyzer(String analyzer) {
 		int index = analyzer.indexOf('@');
 		
-		return analyzer.substring(0, index);
+		if (index<0) {
+			return "";
+		}
+		else {
+			return analyzer.substring(0, index);
+		}
 	}
 	
 }
