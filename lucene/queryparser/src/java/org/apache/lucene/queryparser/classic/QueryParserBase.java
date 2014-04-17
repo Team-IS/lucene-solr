@@ -27,6 +27,7 @@ import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.TermToBytesRefAttribute;
 import org.apache.lucene.document.DateTools;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.meta.MetaDataReader;
 import org.apache.lucene.queryparser.classic.QueryParser.Operator;
 import org.apache.lucene.queryparser.flexible.standard.CommonQueryParserConfiguration;
 import org.apache.lucene.search.*;
@@ -82,6 +83,10 @@ public abstract class QueryParserBase extends QueryBuilder implements CommonQuer
   boolean analyzeRangeTerms = false;
 
   boolean autoGeneratePhraseQueries;
+  
+  // The reader responsible for reading the metadata xml file 
+  // containing information about the utils used during indexing.
+  protected MetaDataReader metaReader;
 
   // So the generated QueryParser(CharStream) won't error out
   protected QueryParserBase() {
@@ -97,6 +102,26 @@ public abstract class QueryParserBase extends QueryBuilder implements CommonQuer
     setAnalyzer(a);
     field = f;
     setAutoGeneratePhraseQueries(false);
+    metaReader = new MetaDataReader(a.toString(), matchVersion.toString(), "");
+    metaDataCompatibility();
+  }
+  
+  /**
+   *  This method checks the if the version of Lucene and the analyzer
+   *  being used for searching match the ones used for indexing.
+   */
+  protected void metaDataCompatibility() {
+	  metaReader.readMetaData();
+	  
+	  if(!metaReader.usesSameVersion()) {
+		  System.err.println("WARNING: The version used for searching is not the same with the one used for indexing. \n");
+		  System.err.println("Expected " + metaReader.getIndexVersion() + " but " + metaReader.getSearchVersion() + " is being used.\n");   
+	  }
+	  
+	  if (!metaReader.usesSameAnalyzer()) {
+		  System.err.println("WARNING: The analyzer used for searching is not the same with the one used for indexing. \n");
+		  System.err.println("Expected " + metaReader.getIndexAnalyzer() + " but " + metaReader.getSearchAnalyzer() + " is being used.\n");   
+	  }  
   }
 
   // the generated parser will create these in QueryParser
