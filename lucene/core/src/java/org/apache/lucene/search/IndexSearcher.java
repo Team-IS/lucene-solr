@@ -930,8 +930,8 @@ public class IndexSearcher {
   }
   
   /**
-   *  This method checks the if the version of Lucene and the analyzer
-   *  being used for searching match the ones used for indexing.
+   *  This method checks if the similarity function
+   *  being used for searching matches the one used for indexing.
    */
   protected void metaDataCompatibility() {
 	  metaReader.readMetaData();
