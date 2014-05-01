@@ -15,9 +15,8 @@ import org.apache.lucene.util.Version;
  * that contains information about the 
  * utils(Analyzer , Similarity , Version) , 
  * that were used during indexing.
- *
  */
-public class MetaDataWriter {
+public class MetaDataWriter implements StringNormalizer {
 
 	/**
 	 * An LiveIndexWriterConfig object , that will be used
@@ -102,11 +101,32 @@ public class MetaDataWriter {
 		Version version = liwc.getVersion();
 		
 		//Create the final file path.
-		String path = filePath+fileName;
+		String path = filePath + fileName;
 		
+        File xmlFolder = null;
+        File xmlFile = null;
 		BufferedWriter bw = null;
 		
 		try {
+			
+			//If the metadata file path does not exist , create it.
+			xmlFolder = new File(filePath);
+			
+			if(!(xmlFolder.exists())) xmlFolder.mkdir();
+			
+			//If the xml file does not exist , create it.
+			xmlFile = new File(path);
+	        
+	        if(!xmlFile.exists()) xmlFile.createNewFile();
+	        
+	        //Else if it exists , delete it , and create it
+	        //all over from the beginning.
+	        else
+	        {
+	             xmlFile.delete();
+	             xmlFile.createNewFile();
+	        }
+	        
 			bw = new BufferedWriter(new FileWriter(new File(path)));
 			
 			bw.write("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n\n");
@@ -118,7 +138,7 @@ public class MetaDataWriter {
 			bw.write("\t</uses-version>\n\n");
 			
 			bw.write("\t<uses-analyzer>\n");
-			bw.write("\t\t" + analyzer.toString() + "\n");
+			bw.write("\t\t" + this.normalizeAnalyzer(analyzer.toString()) + "\n");
 			bw.write("\t</uses-analyzer>\n\n");
 			
 			bw.write("\t<uses-similarity>\n");
@@ -127,12 +147,29 @@ public class MetaDataWriter {
 			
 			bw.write("</indexinfo>");
 			
+			//Mark the xml metadata file as read-only.
+			xmlFile.setReadOnly();
+			
 			bw.close();
+			analyzer.close();
 		}
 		
 		catch(Exception e) {
 			System.err.println("Exception occured while writing the xml metadata file : \n");
 			e.printStackTrace();
+		}
+	}
+	
+	@Override
+	public String normalizeAnalyzer(String analyzer) {
+		int index = analyzer.indexOf('@');
+		
+		if (index < 0) {
+			return "";
+		}
+		
+		else {
+			return analyzer.substring(0, index);
 		}
 	}
 }
