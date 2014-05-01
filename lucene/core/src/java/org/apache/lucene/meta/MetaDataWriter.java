@@ -101,7 +101,7 @@ public class MetaDataWriter implements StringNormalizer {
       Version version = liwc.getVersion();
       
       //Create the final file path.
-      String path = filePath + "/" + fileName;
+      String path = (filePath.equals(""))?fileName:filePath + "/" + fileName;
       
       File xmlFolder = null;
       File xmlFile = null;
