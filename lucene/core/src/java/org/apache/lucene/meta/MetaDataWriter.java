@@ -151,7 +151,6 @@ public class MetaDataWriter implements StringNormalizer {
 			xmlFile.setReadOnly();
 			
 			bw.close();
-			analyzer.close();
 		}
 		
 		catch(Exception e) {
