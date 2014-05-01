@@ -5,7 +5,7 @@ package org.apache.lucene.meta;
  * containing the metadata and checking if the same 
  * utils are being used for indexing and searching. 
  */
-public class MetaDataReader {
+public class MetaDataReader implements StringNormalizer {
 
 	/**
 	 * The analyzer used during indexing.
@@ -158,7 +158,7 @@ public class MetaDataReader {
 		String[] metadata = parser.parse();
 		
 		this.indexVersion = metadata[0];
-		this.indexAnalyzer = normalizeAnalyzer(metadata[1]);
+		this.indexAnalyzer = metadata[1];
 		this.indexSimilarity = metadata[2];
 	}
 	
@@ -195,28 +195,16 @@ public class MetaDataReader {
 		return this.indexSimilarity.equals(searchSimilarity);
 	}
 	
-	/**
-	 * The analyzer class and all of its subclasses does
-	 * not contain a custom toString() method. So every 
-	 * time we call the toString method, on an analyzer 
-	 * object, the result is a String that ends with a 
-	 * character '@' followed by a hexadecimal value.
-	 * 
-	 * This method will normalize the analyzer returned 
-	 * by removing the part that starts with '@' . 
-	 * 
-	 * @param analyzer The analyzer to be normalized.
-	 * @return the normalized analyzer.
-	 */
-	private String normalizeAnalyzer(String analyzer) {
+	@Override
+	public String normalizeAnalyzer(String analyzer) {
 		int index = analyzer.indexOf('@');
 		
-		if (index<0) {
+		if (index < 0) {
 			return "";
 		}
+		
 		else {
 			return analyzer.substring(0, index);
 		}
 	}
-	
 }
