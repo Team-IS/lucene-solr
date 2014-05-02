@@ -153,8 +153,9 @@ public class MetaDataReader implements StringNormalizer {
     * Reads metadata information from the xml file.
     */
    public void readMetaData() {
-      this.parser = new MetaDataParser(filePath + fileName);
-      
+      String finalPath = (filePath.equals("")) ? fileName : (filePath + "/" + fileName);  
+
+      this.parser = new MetaDataParser(finalPath);      
       String[] metadata = parser.parse();
       
       this.indexVersion = metadata[0];
@@ -200,7 +201,7 @@ public class MetaDataReader implements StringNormalizer {
       int index = analyzer.indexOf('@');
       
       if (index < 0) {
-         return "";
+         return analyzer;
       }
       
       else {
