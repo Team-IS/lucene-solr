@@ -149,6 +149,7 @@ public class MetaDataReader implements StringNormalizer {
    public String getSearchAnalyzer() {
       return this.searchAnalyzer;
    }
+   
    /**
     * Reads metadata information from the xml file.
     */
