@@ -17,6 +17,8 @@ package org.apache.solr.handler.admin;
  * limitations under the License.
  */
 
+import java.io.File;
+
 import org.apache.commons.io.FileUtils;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.params.CoreAdminParams;
@@ -25,8 +27,6 @@ import org.apache.solr.core.SolrCore;
 import org.apache.solr.response.SolrQueryResponse;
 import org.junit.BeforeClass;
 import org.junit.Test;
-
-import java.io.File;
 
 
 public class CoreAdminRequestStatusTest extends SolrTestCaseJ4{
@@ -37,26 +37,16 @@ public class CoreAdminRequestStatusTest extends SolrTestCaseJ4{
 
   @Test
   public void testCoreAdminRequestStatus() throws Exception {
-    final File workDir = new File(TEMP_DIR, this.getClass().getName());
-
-    if (workDir.exists()) {
-      FileUtils.deleteDirectory(workDir);
-    }
-    assertTrue("Failed to mkdirs workDir", workDir.mkdirs());
+    final File workDir = createTempDir().toFile();
 
     final CoreContainer cores = h.getCoreContainer();
 
     final CoreAdminHandler admin = new CoreAdminHandler(cores);
 
-    String instDir = null;
-    {
-      SolrCore template = null;
-      try {
-        template = cores.getCore("collection1");
-        instDir = template.getCoreDescriptor().getInstanceDir();
-      } finally {
-        if (null != template) template.close();
-      }
+    String instDir;
+    try (SolrCore template = cores.getCore("collection1")) {
+      assertNotNull(template);
+      instDir = template.getCoreDescriptor().getInstanceDir();
     }
 
     final File instDirFile = new File(instDir);

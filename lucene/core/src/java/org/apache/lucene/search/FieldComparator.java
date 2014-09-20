@@ -19,15 +19,15 @@ package org.apache.lucene.search;
 
 import java.io.IOException;
 
+import org.apache.lucene.index.AtomicReader;
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.index.DocValues;
+import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
-import org.apache.lucene.search.FieldCache.DoubleParser;
-import org.apache.lucene.search.FieldCache.FloatParser;
-import org.apache.lucene.search.FieldCache.IntParser;
-import org.apache.lucene.search.FieldCache.LongParser;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 
 /**
  * Expert: a FieldComparator compares hits so as to determine their
@@ -82,7 +82,7 @@ import org.apache.lucene.util.BytesRef;
  *       when the search is switching to the next segment.
  *       You may need to update internal state of the
  *       comparator, for example retrieving new values from
- *       the {@link FieldCache}.
+ *       DocValues.
  *
  *  <li> {@link #value} Return the sort value stored in
  *       the specified slot.  This is only called at the end
@@ -227,6 +227,7 @@ public abstract class FieldComparator<T> {
     protected final T missingValue;
     protected final String field;
     protected Bits docsWithField;
+    protected NumericDocValues currentReaderValues;
     
     public NumericComparator(String field, T missingValue) {
       this.field = field;
@@ -235,8 +236,9 @@ public abstract class FieldComparator<T> {
 
     @Override
     public FieldComparator<T> setNextReader(AtomicReaderContext context) throws IOException {
+      currentReaderValues = getNumericDocValues(context, field);
       if (missingValue != null) {
-        docsWithField = FieldCache.DEFAULT.getDocsWithField(context.reader(), field);
+        docsWithField = DocValues.getDocsWithField(context.reader(), field);
         // optimization to remove unneeded checks on the bit interface:
         if (docsWithField instanceof Bits.MatchAllBits) {
           docsWithField = null;
@@ -246,21 +248,23 @@ public abstract class FieldComparator<T> {
       }
       return this;
     }
+    
+    /** Retrieves the NumericDocValues for the field in this segment */
+    protected NumericDocValues getNumericDocValues(AtomicReaderContext context, String field) throws IOException {
+      return DocValues.getNumeric(context.reader(), field);
+    }
   }
 
   /** Parses field's values as double (using {@link
-   *  FieldCache#getDoubles} and sorts by ascending value */
-  public static final class DoubleComparator extends NumericComparator<Double> {
+   *  AtomicReader#getNumericDocValues} and sorts by ascending value */
+  public static class DoubleComparator extends NumericComparator<Double> {
     private final double[] values;
-    private final DoubleParser parser;
-    private FieldCache.Doubles currentReaderValues;
     private double bottom;
     private double topValue;
 
-    DoubleComparator(int numHits, String field, FieldCache.Parser parser, Double missingValue) {
+    DoubleComparator(int numHits, String field, Double missingValue) {
       super(field, missingValue);
       values = new double[numHits];
-      this.parser = (DoubleParser) parser;
     }
 
     @Override
@@ -270,7 +274,7 @@ public abstract class FieldComparator<T> {
 
     @Override
     public int compareBottom(int doc) {
-      double v2 = currentReaderValues.get(doc);
+      double v2 = Double.longBitsToDouble(currentReaderValues.get(doc));
       // Test for v2 == 0 to save Bits.get method call for
       // the common case (doc has value and value is non-zero):
       if (docsWithField != null && v2 == 0 && !docsWithField.get(doc)) {
@@ -282,7 +286,7 @@ public abstract class FieldComparator<T> {
 
     @Override
     public void copy(int slot, int doc) {
-      double v2 = currentReaderValues.get(doc);
+      double v2 = Double.longBitsToDouble(currentReaderValues.get(doc));
       // Test for v2 == 0 to save Bits.get method call for
       // the common case (doc has value and value is non-zero):
       if (docsWithField != null && v2 == 0 && !docsWithField.get(doc)) {
@@ -290,14 +294,6 @@ public abstract class FieldComparator<T> {
       }
 
       values[slot] = v2;
-    }
-
-    @Override
-    public FieldComparator<Double> setNextReader(AtomicReaderContext context) throws IOException {
-      // NOTE: must do this before calling super otherwise
-      // we compute the docsWithField Bits twice!
-      currentReaderValues = FieldCache.DEFAULT.getDoubles(context.reader(), field, parser, missingValue != null);
-      return super.setNextReader(context);
     }
     
     @Override
@@ -317,7 +313,7 @@ public abstract class FieldComparator<T> {
 
     @Override
     public int compareTop(int doc) {
-      double docValue = currentReaderValues.get(doc);
+      double docValue = Double.longBitsToDouble(currentReaderValues.get(doc));
       // Test for docValue == 0 to save Bits.get method call for
       // the common case (doc has value and value is non-zero):
       if (docsWithField != null && docValue == 0 && !docsWithField.get(doc)) {
@@ -328,18 +324,15 @@ public abstract class FieldComparator<T> {
   }
 
   /** Parses field's values as float (using {@link
-   *  FieldCache#getFloats} and sorts by ascending value */
-  public static final class FloatComparator extends NumericComparator<Float> {
+   *  AtomicReader#getNumericDocValues(String)} and sorts by ascending value */
+  public static class FloatComparator extends NumericComparator<Float> {
     private final float[] values;
-    private final FloatParser parser;
-    private FieldCache.Floats currentReaderValues;
     private float bottom;
     private float topValue;
 
-    FloatComparator(int numHits, String field, FieldCache.Parser parser, Float missingValue) {
+    FloatComparator(int numHits, String field, Float missingValue) {
       super(field, missingValue);
       values = new float[numHits];
-      this.parser = (FloatParser) parser;
     }
     
     @Override
@@ -350,7 +343,7 @@ public abstract class FieldComparator<T> {
     @Override
     public int compareBottom(int doc) {
       // TODO: are there sneaky non-branch ways to compute sign of float?
-      float v2 = currentReaderValues.get(doc);
+      float v2 = Float.intBitsToFloat((int)currentReaderValues.get(doc));
       // Test for v2 == 0 to save Bits.get method call for
       // the common case (doc has value and value is non-zero):
       if (docsWithField != null && v2 == 0 && !docsWithField.get(doc)) {
@@ -362,7 +355,7 @@ public abstract class FieldComparator<T> {
 
     @Override
     public void copy(int slot, int doc) {
-      float v2 = currentReaderValues.get(doc);
+      float v2 =  Float.intBitsToFloat((int)currentReaderValues.get(doc));
       // Test for v2 == 0 to save Bits.get method call for
       // the common case (doc has value and value is non-zero):
       if (docsWithField != null && v2 == 0 && !docsWithField.get(doc)) {
@@ -370,14 +363,6 @@ public abstract class FieldComparator<T> {
       }
 
       values[slot] = v2;
-    }
-
-    @Override
-    public FieldComparator<Float> setNextReader(AtomicReaderContext context) throws IOException {
-      // NOTE: must do this before calling super otherwise
-      // we compute the docsWithField Bits twice!
-      currentReaderValues = FieldCache.DEFAULT.getFloats(context.reader(), field, parser, missingValue != null);
-      return super.setNextReader(context);
     }
     
     @Override
@@ -397,7 +382,7 @@ public abstract class FieldComparator<T> {
 
     @Override
     public int compareTop(int doc) {
-      float docValue = currentReaderValues.get(doc);
+      float docValue = Float.intBitsToFloat((int)currentReaderValues.get(doc));
       // Test for docValue == 0 to save Bits.get method call for
       // the common case (doc has value and value is non-zero):
       if (docsWithField != null && docValue == 0 && !docsWithField.get(doc)) {
@@ -408,18 +393,15 @@ public abstract class FieldComparator<T> {
   }
 
   /** Parses field's values as int (using {@link
-   *  FieldCache#getInts} and sorts by ascending value */
-  public static final class IntComparator extends NumericComparator<Integer> {
+   *  AtomicReader#getNumericDocValues(String)} and sorts by ascending value */
+  public static class IntComparator extends NumericComparator<Integer> {
     private final int[] values;
-    private final IntParser parser;
-    private FieldCache.Ints currentReaderValues;
     private int bottom;                           // Value of bottom of queue
     private int topValue;
 
-    IntComparator(int numHits, String field, FieldCache.Parser parser, Integer missingValue) {
+    IntComparator(int numHits, String field, Integer missingValue) {
       super(field, missingValue);
       values = new int[numHits];
-      this.parser = (IntParser) parser;
     }
         
     @Override
@@ -429,7 +411,7 @@ public abstract class FieldComparator<T> {
 
     @Override
     public int compareBottom(int doc) {
-      int v2 = currentReaderValues.get(doc);
+      int v2 = (int) currentReaderValues.get(doc);
       // Test for v2 == 0 to save Bits.get method call for
       // the common case (doc has value and value is non-zero):
       if (docsWithField != null && v2 == 0 && !docsWithField.get(doc)) {
@@ -441,7 +423,7 @@ public abstract class FieldComparator<T> {
 
     @Override
     public void copy(int slot, int doc) {
-      int v2 = currentReaderValues.get(doc);
+      int v2 = (int) currentReaderValues.get(doc);
       // Test for v2 == 0 to save Bits.get method call for
       // the common case (doc has value and value is non-zero):
       if (docsWithField != null && v2 == 0 && !docsWithField.get(doc)) {
@@ -449,14 +431,6 @@ public abstract class FieldComparator<T> {
       }
 
       values[slot] = v2;
-    }
-
-    @Override
-    public FieldComparator<Integer> setNextReader(AtomicReaderContext context) throws IOException {
-      // NOTE: must do this before calling super otherwise
-      // we compute the docsWithField Bits twice!
-      currentReaderValues = FieldCache.DEFAULT.getInts(context.reader(), field, parser, missingValue != null);
-      return super.setNextReader(context);
     }
     
     @Override
@@ -476,7 +450,7 @@ public abstract class FieldComparator<T> {
 
     @Override
     public int compareTop(int doc) {
-      int docValue = currentReaderValues.get(doc);
+      int docValue = (int) currentReaderValues.get(doc);
       // Test for docValue == 0 to save Bits.get method call for
       // the common case (doc has value and value is non-zero):
       if (docsWithField != null && docValue == 0 && !docsWithField.get(doc)) {
@@ -487,18 +461,15 @@ public abstract class FieldComparator<T> {
   }
 
   /** Parses field's values as long (using {@link
-   *  FieldCache#getLongs} and sorts by ascending value */
-  public static final class LongComparator extends NumericComparator<Long> {
+   *  AtomicReader#getNumericDocValues(String)} and sorts by ascending value */
+  public static class LongComparator extends NumericComparator<Long> {
     private final long[] values;
-    private final LongParser parser;
-    private FieldCache.Longs currentReaderValues;
     private long bottom;
     private long topValue;
 
-    LongComparator(int numHits, String field, FieldCache.Parser parser, Long missingValue) {
+    LongComparator(int numHits, String field, Long missingValue) {
       super(field, missingValue);
       values = new long[numHits];
-      this.parser = (LongParser) parser;
     }
 
     @Override
@@ -530,14 +501,6 @@ public abstract class FieldComparator<T> {
       }
 
       values[slot] = v2;
-    }
-
-    @Override
-    public FieldComparator<Long> setNextReader(AtomicReaderContext context) throws IOException {
-      // NOTE: must do this before calling super otherwise
-      // we compute the docsWithField Bits twice!
-      currentReaderValues = FieldCache.DEFAULT.getLongs(context.reader(), field, parser, missingValue != null);
-      return super.setNextReader(context);
     }
     
     @Override
@@ -712,7 +675,7 @@ public abstract class FieldComparator<T> {
    *  ordinals.  This is functionally equivalent to {@link
    *  org.apache.lucene.search.FieldComparator.TermValComparator}, but it first resolves the string
    *  to their relative ordinal positions (using the index
-   *  returned by {@link FieldCache#getTermsIndex}), and
+   *  returned by {@link AtomicReader#getSortedDocValues(String)}), and
    *  does most comparisons using the ordinals.  For medium
    *  to large results, this comparator will be much faster
    *  than {@link org.apache.lucene.search.FieldComparator.TermValComparator}.  For very small
@@ -725,6 +688,7 @@ public abstract class FieldComparator<T> {
     /* Values for each slot.
        @lucene.internal */
     final BytesRef[] values;
+    private final BytesRefBuilder[] tempBRs;
 
     /* Which reader last copied a value into the slot. When
        we compare two slots, we just compare-by-ord if the
@@ -767,8 +731,6 @@ public abstract class FieldComparator<T> {
     boolean topSameReader;
     int topOrd;
 
-    final BytesRef tempBR = new BytesRef();
-
     /** -1 if missing values are sorted first, 1 if they are
      *  sorted last */
     final int missingSortCmp;
@@ -787,6 +749,7 @@ public abstract class FieldComparator<T> {
     public TermOrdValComparator(int numHits, String field, boolean sortMissingLast) {
       ords = new int[numHits];
       values = new BytesRef[numHits];
+      tempBRs = new BytesRefBuilder[numHits];
       readerGen = new int[numHits];
       this.field = field;
       if (sortMissingLast) {
@@ -845,10 +808,11 @@ public abstract class FieldComparator<T> {
         values[slot] = null;
       } else {
         assert ord >= 0;
-        if (values[slot] == null) {
-          values[slot] = new BytesRef();
+        if (tempBRs[slot] == null) {
+          tempBRs[slot] = new BytesRefBuilder();
         }
-        termsIndex.lookupOrd(ord, values[slot]);
+        tempBRs[slot].copyBytes(termsIndex.lookupOrd(ord));
+        values[slot] = tempBRs[slot].get();
       }
       ords[slot] = ord;
       readerGen[slot] = currentReaderGen;
@@ -856,7 +820,7 @@ public abstract class FieldComparator<T> {
     
     /** Retrieves the SortedDocValues for the field in this segment */
     protected SortedDocValues getSortedDocValues(AtomicReaderContext context, String field) throws IOException {
-      return FieldCache.DEFAULT.getTermsIndex(context.reader(), field);
+      return DocValues.getSorted(context.reader(), field);
     }
     
     @Override
@@ -972,65 +936,78 @@ public abstract class FieldComparator<T> {
    *  comparisons are done using BytesRef.compareTo, which is
    *  slow for medium to large result sets but possibly
    *  very fast for very small results sets. */
-  // TODO: should we remove this?  who really uses it?
-  public static final class TermValComparator extends FieldComparator<BytesRef> {
-
-    // sentinels, just used internally in this comparator
-    private static final byte[] MISSING_BYTES = new byte[0];
-    private static final byte[] NON_MISSING_BYTES = new byte[0];
-
-    private BytesRef[] values;
+  public static class TermValComparator extends FieldComparator<BytesRef> {
+    
+    private final BytesRef[] values;
+    private final BytesRefBuilder[] tempBRs;
     private BinaryDocValues docTerms;
     private Bits docsWithField;
     private final String field;
     private BytesRef bottom;
     private BytesRef topValue;
-    private final BytesRef tempBR = new BytesRef();
-
-    // TODO: add missing first/last support here?
+    private final int missingSortCmp;
 
     /** Sole constructor. */
-    TermValComparator(int numHits, String field) {
+    public TermValComparator(int numHits, String field, boolean sortMissingLast) {
       values = new BytesRef[numHits];
+      tempBRs = new BytesRefBuilder[numHits];
       this.field = field;
+      missingSortCmp = sortMissingLast ? 1 : -1;
     }
 
     @Override
     public int compare(int slot1, int slot2) {
       final BytesRef val1 = values[slot1];
       final BytesRef val2 = values[slot2];
-      if (val1.bytes == MISSING_BYTES) {
-        if (val2.bytes == MISSING_BYTES) {
-          return 0;
-        }
-        return -1;
-      } else if (val2.bytes == MISSING_BYTES) {
-        return 1;
-      }
-
-      return val1.compareTo(val2);
+      return compareValues(val1, val2);
     }
 
     @Override
     public int compareBottom(int doc) {
-      docTerms.get(doc, tempBR);
-      setMissingBytes(doc, tempBR);
-      return compareValues(bottom, tempBR);
+      final BytesRef comparableBytes = getComparableBytes(doc, docTerms.get(doc));
+      return compareValues(bottom, comparableBytes);
     }
 
     @Override
     public void copy(int slot, int doc) {
-      if (values[slot] == null) {
-        values[slot] = new BytesRef();
+      final BytesRef comparableBytes = getComparableBytes(doc, docTerms.get(doc));
+      if (comparableBytes == null) {
+        values[slot] = null;
+      } else {
+        if (tempBRs[slot] == null) {
+          tempBRs[slot] = new BytesRefBuilder();
+        }
+        tempBRs[slot].copyBytes(comparableBytes);
+        values[slot] = tempBRs[slot].get();
       }
-      docTerms.get(doc, values[slot]);
-      setMissingBytes(doc, values[slot]);
+    }
+
+    /** Retrieves the BinaryDocValues for the field in this segment */
+    protected BinaryDocValues getBinaryDocValues(AtomicReaderContext context, String field) throws IOException {
+      return DocValues.getBinary(context.reader(), field);
+    }
+
+    /** Retrieves the set of documents that have a value in this segment */
+    protected Bits getDocsWithField(AtomicReaderContext context, String field) throws IOException {
+      return DocValues.getDocsWithField(context.reader(), field);
+    }
+
+    /** Check whether the given value represents <tt>null</tt>. This can be
+     *  useful if the {@link BinaryDocValues} returned by {@link #getBinaryDocValues}
+     *  use a special value as a sentinel. The default implementation checks
+     *  {@link #getDocsWithField}.
+     *  <p>NOTE: The null value can only be an EMPTY {@link BytesRef}. */
+    protected boolean isNull(int doc, BytesRef term) {
+      return docsWithField != null && docsWithField.get(doc) == false;
     }
 
     @Override
     public FieldComparator<BytesRef> setNextReader(AtomicReaderContext context) throws IOException {
-      docTerms = FieldCache.DEFAULT.getTerms(context.reader(), field, true);
-      docsWithField = FieldCache.DEFAULT.getDocsWithField(context.reader(), field);
+      docTerms = getBinaryDocValues(context, field);
+      docsWithField = getDocsWithField(context, field);
+      if (docsWithField instanceof Bits.MatchAllBits) {
+        docsWithField = null;
+      }
       return this;
     }
     
@@ -1041,9 +1018,8 @@ public abstract class FieldComparator<T> {
 
     @Override
     public void setTopValue(BytesRef value) {
-      if (value == null) {
-        throw new IllegalArgumentException("value cannot be null");
-      }
+      // null is fine: it means the last doc of the prior
+      // search was missing this value
       topValue = value;
     }
 
@@ -1055,33 +1031,32 @@ public abstract class FieldComparator<T> {
     @Override
     public int compareValues(BytesRef val1, BytesRef val2) {
       // missing always sorts first:
-      if (val1.bytes == MISSING_BYTES) {
-        if (val2.bytes == MISSING_BYTES) {
+      if (val1 == null) {
+        if (val2 == null) {
           return 0;
         }
-        return -1;
-      } else if (val2.bytes == MISSING_BYTES) {
-        return 1;
+        return missingSortCmp;
+      } else if (val2 == null) {
+        return -missingSortCmp;
       }
       return val1.compareTo(val2);
     }
 
     @Override
     public int compareTop(int doc) {
-      docTerms.get(doc, tempBR);
-      setMissingBytes(doc, tempBR);
-      return compareValues(topValue, tempBR);
+      final BytesRef comparableBytes = getComparableBytes(doc, docTerms.get(doc));
+      return compareValues(topValue, comparableBytes);
     }
 
-    private void setMissingBytes(int doc, BytesRef br) {
-      if (br.length == 0) {
-        br.offset = 0;
-        if (docsWithField.get(doc) == false) {
-          br.bytes = MISSING_BYTES;
-        } else {
-          br.bytes = NON_MISSING_BYTES;
-        }
+    /**
+     * Given a document and a term, return the term itself if it exists or
+     * <tt>null</tt> otherwise.
+     */
+    private BytesRef getComparableBytes(int doc, BytesRef term) {
+      if (term.length == 0 && isNull(doc, term)) {
+        return null;
       }
+      return term;
     }
   }
 }

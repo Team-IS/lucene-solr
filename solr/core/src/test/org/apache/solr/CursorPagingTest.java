@@ -35,6 +35,7 @@ import org.apache.solr.search.CursorMark; //jdoc
 
 import org.noggit.ObjectBuilder;
 
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -42,7 +43,7 @@ import java.util.List;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
-import java.nio.ByteBuffer;
+import java.util.UUID;
 
 import org.junit.BeforeClass;
 import org.junit.After;
@@ -56,6 +57,9 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
   public final static String TEST_SOLRCONFIG_NAME = "solrconfig-deeppaging.xml";
   /** schema.xml file name, shared with other cursor related tests */
   public final static String TEST_SCHEMAXML_NAME = "schema-sorts.xml";
+  /** values from enumConfig.xml */
+  public static final String[] SEVERITY_ENUM_VALUES =
+      { "Not Available", "Low", "Medium", "High", "Critical" };
 
   @BeforeClass
   public static void beforeTests() throws Exception {
@@ -121,7 +125,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     SolrParams params = null;
     
     final String intsort = "int" + (random().nextBoolean() ? "" : "_dv");
-    final String intmissingsort = defaultCodecSupportsMissingDocValues() ? intsort : "int";
+    final String intmissingsort = intsort;
 
     // trivial base case: ensure cursorMark against an empty index doesn't blow up
     cursorMark = CURSOR_MARK_START;
@@ -612,11 +616,6 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     return 0 != TestUtil.nextInt(random(), 0, 30);
   }
   
-  /** returns likely most (1/10) of the time, otherwise unlikely */
-  private static Object skewed(Object likely, Object unlikely) {
-    return (0 == TestUtil.nextInt(random(), 0, 9)) ? unlikely : likely;
-  }
-  
   /**
    * An immutable list of the fields in the schema that can be used for sorting,
    * deterministically random order.
@@ -634,24 +633,13 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
    * </p>
    * <ul>
    *  <li><code>_version_</code> is removed</li>
-   *  <li>
-   *    <code>*_dv_last</code>, <code>*_dv_first</code> and <code>*_dv</code>
-   *    fields are removed if the codec doesn't support missing DocValues
-   *  </li>
    * </ul>
-   * @see #defaultCodecSupportsMissingDocValues
    */
   public static List<String> pruneAndDeterministicallySort(Collection<String> raw) {
-
-    final boolean prune_dv = ! defaultCodecSupportsMissingDocValues();
 
     ArrayList<String> names = new ArrayList<>(37);
     for (String f : raw) {
       if (f.equals("_version_")) {
-        continue;
-      }
-      if (prune_dv && (f.endsWith("_dv_last") || f.endsWith("_dv_first"))
-                       || f.endsWith("_dv")) {
         continue;
       }
       names.add(f);
@@ -676,7 +664,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     String cursorMark = CURSOR_MARK_START;
     int docsOnThisPage = Integer.MAX_VALUE;
     while (0 < docsOnThisPage) {
-      String json = assertJQ(req(params, 
+      String json = assertJQ(req(params,
                                  CURSOR_MARK_PARAM, cursorMark));
       Map rsp = (Map) ObjectBuilder.fromJSON(json);
       assertTrue("response doesn't contain " + CURSOR_MARK_NEXT + ": " + json,
@@ -891,15 +879,30 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
                                     1.0D / random().nextInt(37)));
     }
     if (useField()) {
-      doc.addField("str", skewed(randomUsableUnicodeString(),
+      doc.addField("str", skewed(randomXmlUsableUnicodeString(),
                                  TestUtil.randomSimpleString(random(), 1, 1)));
-
     }
     if (useField()) {
       int numBytes = (int) skewed(TestUtil.nextInt(random(), 20, 50), 2);
       byte[] randBytes = new byte[numBytes];
       random().nextBytes(randBytes);
       doc.addField("bin", ByteBuffer.wrap(randBytes));
+    }
+    if (useField()) {
+      doc.addField("date", skewed(randomDate(), randomSkewedDate()));
+    }
+    if (useField()) {
+      doc.addField("uuid", UUID.randomUUID().toString());
+    }
+    if (useField()) {
+      doc.addField("currency", skewed("" + (random().nextInt() / 100.) + "," + randomCurrency(),
+                                      "" + TestUtil.nextInt(random(), 250, 320) + ",USD"));
+    }
+    if (useField()) {
+      doc.addField("bool", random().nextBoolean() ? "t" : "f");
+    }
+    if (useField()) {
+      doc.addField("enum", randomEnumValue());
     }
     return doc;
   }
@@ -926,17 +929,14 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     }
   }
 
-  /**
-   * We want "realistic" unicode strings beyond simple ascii, but because our
-   * updates use XML we need to ensure we don't get "special" code block.
-   */
-  private static String randomUsableUnicodeString() {
-    String result = TestUtil.randomRealisticUnicodeString(random());
-    if (result.matches(".*\\p{InSpecials}.*")) {
-      // oh well
-      result = TestUtil.randomSimpleString(random());
-    }
-    return result;
+  private static final String[] currencies = { "USD", "EUR", "NOK" };
+
+  public static String randomCurrency() {
+    return currencies[random().nextInt(currencies.length)];
+  }
+
+  private static String randomEnumValue() {
+    return SEVERITY_ENUM_VALUES[random().nextInt(SEVERITY_ENUM_VALUES.length)];
   }
 
   /**
@@ -956,15 +956,14 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
       String field = shuffledNames.get(i);
 
       // wrap in a function sometimes
-      if ( (!"score".equals(field))
-           && 
-           (0 == TestUtil.nextInt(random(), 0, 7)) ) {
+      if ( ! "score".equals(field) && 0 == TestUtil.nextInt(random(), 0, 7)) {
         // specific function doesn't matter, just proving that we can handle the concept.
         // but we do have to be careful with non numeric fields
-        if (field.startsWith("str") || field.startsWith("bin")) {
-          field = "if(exists(" + field + "),47,83)";
-        } else {
+        if (field.contains("float") || field.contains("double")
+            || field.contains("int") || field.contains("long")) {
           field = "abs(" + field + ")";
+        } else {
+          field = "if(exists(" + field + "),47,83)";
         }
       }
       result.append(field).append(random().nextBoolean() ? " asc, " : " desc, ");

@@ -19,15 +19,22 @@ package org.apache.lucene.util.fst;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.RamUsageEstimator;
 
 // TODO: merge with PagedBytes, except PagedBytes doesn't
 // let you read while writing which FST needs
 
-class BytesStore extends DataOutput {
+class BytesStore extends DataOutput implements Accountable {
+
+  private static final long BASE_RAM_BYTES_USED =
+        RamUsageEstimator.shallowSizeOfInstance(BytesStore.class)
+      + RamUsageEstimator.shallowSizeOfInstance(ArrayList.class);
 
   private final List<byte[]> blocks = new ArrayList<>();
 
@@ -362,7 +369,7 @@ class BytesStore extends DataOutput {
       }
 
       @Override
-      public void skipBytes(int count) {
+      public void skipBytes(long count) {
         setPosition(getPosition() + count);
       }
 
@@ -430,7 +437,7 @@ class BytesStore extends DataOutput {
       }
 
       @Override
-      public void skipBytes(int count) {
+      public void skipBytes(long count) {
         setPosition(getPosition() - count);
       }
 
@@ -464,5 +471,24 @@ class BytesStore extends DataOutput {
         return true;
       }
     };
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    long size = BASE_RAM_BYTES_USED;
+    for (byte[] block : blocks) {
+      size += RamUsageEstimator.sizeOf(block);
+    }
+    return size;
+  }
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.emptyList();
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(numBlocks=" + blocks.size() + ")";
   }
 }

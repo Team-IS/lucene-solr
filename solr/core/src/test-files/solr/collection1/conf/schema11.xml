@@ -37,7 +37,7 @@
        1.0: multiValued attribute did not exist, all fields are multiValued by nature
        1.1: multiValued attribute introduced, false by default -->
 
-  <types>
+
     <!-- field type definitions. The "name" attribute is
        just a label to be used by field definitions.  The "class"
        attribute and any other attributes determine the real
@@ -67,26 +67,16 @@
        - If sortMissingLast="false" and sortMissingFirst="false" (the default),
          then default lucene sorting will be used which places docs without the
          field first in an ascending sort and last in a descending sort.
-    -->    
+    -->
 
 
-    <!-- numeric field types that store and index the text
-         value verbatim (and hence don't support range queries, since the
-         lexicographic ordering isn't equal to the numeric ordering) -->
-    <fieldType name="integer" class="solr.IntField" omitNorms="true"/>
-    <fieldType name="long" class="solr.LongField" omitNorms="true"/>
-    <fieldType name="float" class="solr.FloatField" omitNorms="true"/>
-    <fieldType name="double" class="solr.DoubleField" omitNorms="true"/>
-
-
-    <!-- Numeric field types that manipulate the value into
-         a string value that isn't human-readable in its internal form,
-         but with a lexicographic ordering the same as the numeric ordering,
-         so that range queries work correctly. -->
-    <fieldType name="sint" class="solr.SortableIntField" sortMissingLast="true" omitNorms="true"/>
-    <fieldType name="slong" class="solr.SortableLongField" sortMissingLast="true" omitNorms="true"/>
-    <fieldType name="sfloat" class="solr.SortableFloatField" sortMissingLast="true" omitNorms="true"/>
-    <fieldType name="sdouble" class="solr.SortableDoubleField" sortMissingLast="true" omitNorms="true"/>
+  <!--
+    Default numeric field types. For faster range queries, consider the tint/tfloat/tlong/tdouble types.
+  -->
+  <fieldType name="int" class="solr.TrieIntField" precisionStep="0" positionIncrementGap="0"/>
+  <fieldType name="float" class="solr.TrieFloatField" precisionStep="0" positionIncrementGap="0"/>
+  <fieldType name="long" class="solr.TrieLongField" precisionStep="0" positionIncrementGap="0"/>
+  <fieldType name="double" class="solr.TrieDoubleField" precisionStep="0" positionIncrementGap="0"/>
 
 
     <!-- The format for this date field is of the form 1995-12-31T23:59:59Z, and
@@ -107,9 +97,9 @@
                   ... 6 months and 3 days in the future from the start of
                       the current day
                       
-         Consult the DateField javadocs for more information.
+         Consult the TrieDateField javadocs for more information.
       -->
-    <fieldType name="date" class="solr.DateField" sortMissingLast="true" omitNorms="true"/>
+    <fieldType name="date" class="solr.TrieDateField" sortMissingLast="true" omitNorms="true"/>
 
 
     <!-- The "RandomSortField" is not used to store or search any
@@ -268,7 +258,6 @@ valued. -->
     <fieldType name="location" class="solr.LatLonType" subFieldSuffix="_coordinate"/>
 
      <!-- These should pass right through and insure that we can declare external field types -->
-    <fieldType name="pfloat" class="solr.FloatField" omitNorms="true"/>
     <fieldType name="eff_float" keyField="id" defVal="0"
                stored="false" indexed="true"
                class="solr.ExternalFileField" valType="float"/>
@@ -276,10 +265,6 @@ valued. -->
     <fieldType name="eff_tfloat" keyField="eff_ti" defVal="0"
                stored="false" indexed="true"
                class="solr.ExternalFileField" valType="tfloat"/>
-
-    <fieldType name="eff_pfloat" keyField="id" defVal="0"
-               stored="false" indexed="true"
-               class="solr.ExternalFileField" valType="pfloat"/>
 
     <!-- Be sure that the valType can be optional Since valType has done nothing up until now, this is preferred -->
     <fieldType name="eff_none" keyField="id" defVal="0"
@@ -297,10 +282,7 @@ valued. -->
       </analyzer>
     </fieldtype>  
 
- </types>
 
-
- <fields>
    <!-- Valid attributes for fields:
      name: mandatory - the name for the field
      type: mandatory - the name of a previously defined type from the <types> section
@@ -317,7 +299,7 @@ valued. -->
    -->
 
    <!-- for testing, a type that does a transform to see if it's correctly done everywhere -->
-   <field name="id" type="sfloat" indexed="true" stored="true" required="true" /> 
+   <field name="id" type="float" indexed="true" stored="true" required="true" />
    <field name="text" type="text" indexed="true" stored="false" />
 
    <!-- Test a point field for distances -->
@@ -335,7 +317,10 @@ valued. -->
    <field name="_version_" type="long" indexed="true" stored="true" multiValued="false" />
 
    <field name="cat" type="string" indexed="true" stored="true" multiValued="true"/>
-   <field name="cat_length" type="text_length" indexed="true" stored="true" multiValued="true"/>   
+   <field name="cat_docValues" type="string"  indexed="true" stored="true" docValues="true" multiValued="true" />
+   <field name="cat_intDocValues" type="int"  indexed="true" stored="true" docValues="true" multiValued="true" />
+   <field name="cat_floatDocValues" type="float"  indexed="true" stored="true" docValues="true" multiValued="true" />
+   <field name="cat_length" type="text_length" indexed="true" stored="true" multiValued="true"/>
 
    <!-- Dynamic field definitions.  If a field name is not found, dynamicFields
         will be used if the name matches any of the patterns.
@@ -344,32 +329,46 @@ valued. -->
         EXAMPLE:  name="*_i" will match any field ending in _i (like myid_i, z_i)
         Longer patterns will be matched first.  if equal size patterns
         both match, the first appearing in the schema will be used.  -->
-   <dynamicField name="*_s"  type="string"  indexed="true"  stored="true"/>
-   <dynamicField name="*_ss"  type="string"  indexed="true"  stored="true" multiValued="true"/>
-   <dynamicField name="*_sS" type="string"  indexed="false" stored="true"/>
-   <dynamicField name="*_ii"  type="integer"    indexed="true"  stored="true" multiValued="true"/>
-   <dynamicField name="*_i"  type="sint"    indexed="true"  stored="true"/>
-   <dynamicField name="*_is"  type="sint"    indexed="true"  stored="true" multiValued="true"/>
-   <dynamicField name="*_l"  type="slong"   indexed="true"  stored="true"/>
-   <dynamicField name="*_f"  type="sfloat"  indexed="true"  stored="true"/>
-   <dynamicField name="*_d"  type="sdouble" indexed="true"  stored="true"/>
+   <dynamicField name="*_s"  	type="string"  indexed="true"  stored="true"/>
+   <dynamicField name="*_ss"  	type="string"  indexed="true"  stored="true" multiValued="true"/>
+   <dynamicField name="*_sS" 	type="string"  indexed="false" stored="true"/>
+   <dynamicField name="*_i"  	type="int"    indexed="true"  stored="true"/>
+   <dynamicField name="*_ii" 	type="int"    indexed="true"  stored="true" multiValued="true"/>
+   <dynamicField name="*_l"  	type="long"   indexed="true"  stored="true"/>
+   <dynamicField name="*_f"  	type="float"  indexed="true"  stored="true"/>
+   <dynamicField name="*_d"  	type="double" indexed="true"  stored="true"/>
 
-   <dynamicField name="*_pi"  type="integer" indexed="true"  stored="true"/>
-   <dynamicField name="*_pl"  type="long"   indexed="true"  stored="true"/>
-   <dynamicField name="*_pf"  type="float"  indexed="true"  stored="true"/>
-   <dynamicField name="*_pd"  type="double" indexed="true"  stored="true"/>
+   <dynamicField name="*_ti"  		type="tint"    indexed="true"  stored="true"/>
+   <dynamicField name="*_ti_dv" 	type="int"    indexed="true"  stored="true" docValues="true"/>
+   <dynamicField name="*_ti_ni_dv" 	type="int"    indexed="true"  stored="true" docValues="true"/>
+   <dynamicField name="*_tl"  		type="tlong"   indexed="true"  stored="true"/>
+   <dynamicField name="*_tl_dv"  	type="tlong"   indexed="true"  stored="true" docValues="true"/>
+   <dynamicField name="*_tl_ni_dv" 	type="tlong"   indexed="false"  stored="true" docValues="true"/>
+   <dynamicField name="*_tf"  		type="tfloat"  indexed="true"  stored="true"/>
+   <dynamicField name="*_tf_dv"  	type="tfloat"  indexed="true"  stored="true" docValues="true"/>
+   <dynamicField name="*_tf_ni_dv" 	type="tfloat"  indexed="false"  stored="true" docValues="true"/>
+   <dynamicField name="*_td"  		type="tdouble" indexed="true"  stored="true"/>
+   <dynamicField name="*_td_dv"  	type="tdouble" indexed="true"  stored="true" docValues="true"/>
+   <dynamicField name="*_td_ni_dv" 	type="tdouble" indexed="false"  stored="true" docValues="true"/>
+   <dynamicField name="*_tdt" 		type="tdate"   indexed="true"  stored="true"/>
+   <dynamicField name="*_tdt_dv" 	type="tdate"   indexed="true"  stored="true" docValues="true"/>
+   <dynamicField name="*_tdt_ni_dv"	type="tdate"   indexed="false"  stored="true" docValues="true"/>
 
-   <dynamicField name="*_ti"  type="tint"    indexed="true"  stored="true"/>
-   <dynamicField name="*_tl"  type="tlong"   indexed="true"  stored="true"/>
-   <dynamicField name="*_tf"  type="tfloat"  indexed="true"  stored="true"/>
-   <dynamicField name="*_td"  type="tdouble" indexed="true"  stored="true"/>
-   <dynamicField name="*_tdt" type="tdate"   indexed="true"  stored="true"/>
-
-   <dynamicField name="*_tis"  type="tints"    indexed="true"  stored="true"/>
-   <dynamicField name="*_tls"  type="tlongs"   indexed="true"  stored="true"/>
-   <dynamicField name="*_tfs"  type="tfloats"  indexed="true"  stored="true"/>
-   <dynamicField name="*_tds"  type="tdoubles" indexed="true"  stored="true"/>
-   <dynamicField name="*_tdts" type="tdates"   indexed="true"  stored="true"/>
+   <dynamicField name="*_tis"  		type="tints"    indexed="true"  stored="true"/>
+   <dynamicField name="*_tis_dv"  	type="tints"    indexed="true"  stored="true" docValues="true"/>
+   <dynamicField name="*_tis_ni_dv"	type="tints"    indexed="false"  stored="true" docValues="true"/>
+   <dynamicField name="*_tls"  		type="tlongs"   indexed="true"  stored="true"/>
+   <dynamicField name="*_tls_dv"  	type="tlongs"   indexed="true"  stored="true" docValues="true"/>
+   <dynamicField name="*_tls_ni_dv"	type="tlongs"   indexed="false"  stored="true" docValues="true"/>
+   <dynamicField name="*_tfs"  		type="tfloats"  indexed="true"  stored="true"/>
+   <dynamicField name="*_tfs_dv"  	type="tfloats"  indexed="true"  stored="true" docValues="true"/>
+   <dynamicField name="*_tfs_ni_dv" type="tfloats"  indexed="false"  stored="true" docValues="true"/>
+   <dynamicField name="*_tds"  		type="tdoubles" indexed="true"  stored="true"/>
+   <dynamicField name="*_tds_dv"  	type="tdoubles" indexed="true"  stored="true" docValues="true"/>
+   <dynamicField name="*_tds_ni_dv" type="tdoubles" indexed="false"  stored="true" docValues="true"/>
+   <dynamicField name="*_tdts" 		type="tdates"   indexed="true"  stored="true"/>
+   <dynamicField name="*_tdts_dv" 	type="tdates"   indexed="true"  stored="true" docValues="true"/>
+   <dynamicField name="*_tdts_ni_dv" type="tdates"   indexed="false"  stored="true" docValues="true"/>
 
    <dynamicField name="*_t"  type="text"    indexed="true"  stored="true"/>
    <dynamicField name="*_b"  type="boolean" indexed="true"  stored="true"/>
@@ -387,7 +386,6 @@ valued. -->
         unknown fields indexed and/or stored by default --> 
    <!--dynamicField name="*" type="ignored" /-->
    
- </fields>
 
  <!-- Field to use to determine and enforce document uniqueness. 
       Unless this field is marked with required="false", it will be a required field

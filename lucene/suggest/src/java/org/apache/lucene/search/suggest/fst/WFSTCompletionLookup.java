@@ -17,6 +17,13 @@ package org.apache.lucene.search.suggest.fst;
  * limitations under the License.
  */
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Set;
+
 import org.apache.lucene.search.suggest.InputIterator;
 import org.apache.lucene.search.suggest.Lookup;
 import org.apache.lucene.search.suggest.SortedInputIterator;
@@ -24,26 +31,22 @@ import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ByteArrayDataOutput;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
-import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.CharsRefBuilder;
+import org.apache.lucene.util.IntsRefBuilder;
 import org.apache.lucene.util.OfflineSorter.ByteSequencesWriter;
-import org.apache.lucene.util.UnicodeUtil;
 import org.apache.lucene.util.fst.Builder;
-import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.FST.Arc;
 import org.apache.lucene.util.fst.FST.BytesReader;
+import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.PositiveIntOutputs;
 import org.apache.lucene.util.fst.Util.Result;
 import org.apache.lucene.util.fst.Util.TopResults;
 import org.apache.lucene.util.fst.Util;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.List;
 
 /**
  * Suggester based on a weighted FST: it first traverses the prefix, 
@@ -97,24 +100,27 @@ public class WFSTCompletionLookup extends Lookup {
     if (iterator.hasPayloads()) {
       throw new IllegalArgumentException("this suggester doesn't support payloads");
     }
+    if (iterator.hasContexts()) {
+      throw new IllegalArgumentException("this suggester doesn't support contexts");
+    }
     count = 0;
     BytesRef scratch = new BytesRef();
     InputIterator iter = new WFSTInputIterator(iterator);
-    IntsRef scratchInts = new IntsRef();
-    BytesRef previous = null;
+    IntsRefBuilder scratchInts = new IntsRefBuilder();
+    BytesRefBuilder previous = null;
     PositiveIntOutputs outputs = PositiveIntOutputs.getSingleton();
     Builder<Long> builder = new Builder<>(FST.INPUT_TYPE.BYTE1, outputs);
     while ((scratch = iter.next()) != null) {
       long cost = iter.weight();
       
       if (previous == null) {
-        previous = new BytesRef();
-      } else if (scratch.equals(previous)) {
+        previous = new BytesRefBuilder();
+      } else if (scratch.equals(previous.get())) {
         continue; // for duplicate suggestions, the best weight is actually
                   // added
       }
       Util.toIntsRef(scratch, scratchInts);
-      builder.add(scratchInts, cost);
+      builder.add(scratchInts.get(), cost);
       previous.copyBytes(scratch);
       count++;
     }
@@ -140,7 +146,10 @@ public class WFSTCompletionLookup extends Lookup {
   }
 
   @Override
-  public List<LookupResult> lookup(CharSequence key, boolean onlyMorePopular, int num) {
+  public List<LookupResult> lookup(CharSequence key, Set<BytesRef> contexts, boolean onlyMorePopular, int num) {
+    if (contexts != null) {
+      throw new IllegalArgumentException("this suggester doesn't support contexts");
+    }
     assert num > 0;
 
     if (onlyMorePopular) {
@@ -151,14 +160,15 @@ public class WFSTCompletionLookup extends Lookup {
       return Collections.emptyList();
     }
 
-    BytesRef scratch = new BytesRef(key);
-    int prefixLength = scratch.length;
+    BytesRefBuilder scratch = new BytesRefBuilder();
+    scratch.copyChars(key);
+    int prefixLength = scratch.length();
     Arc<Long> arc = new Arc<>();
     
     // match the prefix portion exactly
     Long prefixOutput = null;
     try {
-      prefixOutput = lookupPrefix(scratch, arc);
+      prefixOutput = lookupPrefix(scratch.get(), arc);
     } catch (IOException bogus) { throw new RuntimeException(bogus); }
     
     if (prefixOutput == null) {
@@ -166,10 +176,9 @@ public class WFSTCompletionLookup extends Lookup {
     }
     
     List<LookupResult> results = new ArrayList<>(num);
-    CharsRef spare = new CharsRef();
+    CharsRefBuilder spare = new CharsRefBuilder();
     if (exactFirst && arc.isFinal()) {
-      spare.grow(scratch.length);
-      UnicodeUtil.UTF8toUTF16(scratch, spare);
+      spare.copyUTF8Bytes(scratch.get());
       results.add(new LookupResult(spare.toString(), decodeWeight(prefixOutput + arc.nextFinalOutput)));
       if (--num == 0) {
         return results; // that was quick
@@ -185,14 +194,13 @@ public class WFSTCompletionLookup extends Lookup {
       throw new RuntimeException(bogus);
     }
     
-    BytesRef suffix = new BytesRef(8);
+    BytesRefBuilder suffix = new BytesRefBuilder();
     for (Result<Long> completion : completions) {
-      scratch.length = prefixLength;
+      scratch.setLength(prefixLength);
       // append suffix
       Util.toBytesRef(completion.input, suffix);
       scratch.append(suffix);
-      spare.grow(scratch.length);
-      UnicodeUtil.UTF8toUTF16(scratch, spare);
+      spare.copyUTF8Bytes(scratch.get());
       results.add(new LookupResult(spare.toString(), decodeWeight(completion.output)));
     }
     return results;
@@ -260,7 +268,7 @@ public class WFSTCompletionLookup extends Lookup {
     }
 
     @Override
-    protected void encode(ByteSequencesWriter writer, ByteArrayDataOutput output, byte[] buffer, BytesRef spare, BytesRef payload, long weight) throws IOException {
+    protected void encode(ByteSequencesWriter writer, ByteArrayDataOutput output, byte[] buffer, BytesRef spare, BytesRef payload, Set<BytesRef> contexts, long weight) throws IOException {
       if (spare.length + 4 >= buffer.length) {
         buffer = ArrayUtil.grow(buffer, spare.length + 4);
       }
@@ -288,10 +296,19 @@ public class WFSTCompletionLookup extends Lookup {
 
   /** Returns byte size of the underlying FST. */
   @Override
-  public long sizeInBytes() {
-    return (fst == null) ? 0 : fst.sizeInBytes();
+  public long ramBytesUsed() {
+    return (fst == null) ? 0 : fst.ramBytesUsed();
   }
   
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    if (fst == null) {
+      return Collections.emptyList();
+    } else {
+      return Collections.singleton(Accountables.namedAccountable("fst", fst));
+    }
+  }
+
   @Override
   public long getCount() {
     return count;

@@ -20,6 +20,7 @@ package org.apache.lucene.search.suggest.tst;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.lucene.search.suggest.InputIterator;
 import org.apache.lucene.search.suggest.Lookup;
@@ -28,6 +29,7 @@ import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.UnicodeUtil;
 
@@ -55,6 +57,9 @@ public class TSTLookup extends Lookup {
     if (iterator.hasPayloads()) {
       throw new IllegalArgumentException("this suggester doesn't support payloads");
     }
+    if (iterator.hasContexts()) {
+      throw new IllegalArgumentException("this suggester doesn't support contexts");
+    }
     root = new TernaryTreeNode();
 
     // make sure it's sorted and the comparator uses UTF16 sort order
@@ -63,10 +68,9 @@ public class TSTLookup extends Lookup {
     ArrayList<String> tokens = new ArrayList<>();
     ArrayList<Number> vals = new ArrayList<>();
     BytesRef spare;
-    CharsRef charsSpare = new CharsRef();
+    CharsRefBuilder charsSpare = new CharsRefBuilder();
     while ((spare = iterator.next()) != null) {
-      charsSpare.grow(spare.length);
-      UnicodeUtil.UTF8toUTF16(spare.bytes, spare.offset, spare.length, charsSpare);
+      charsSpare.copyUTF8Bytes(spare);
       tokens.add(charsSpare.toString());
       vals.add(Long.valueOf(iterator.weight()));
       count++;
@@ -117,7 +121,10 @@ public class TSTLookup extends Lookup {
   }
 
   @Override
-  public List<LookupResult> lookup(CharSequence key, boolean onlyMorePopular, int num) {
+  public List<LookupResult> lookup(CharSequence key, Set<BytesRef> contexts, boolean onlyMorePopular, int num) {
+    if (contexts != null) {
+      throw new IllegalArgumentException("this suggester doesn't support contexts");
+    }
     List<TernaryTreeNode> list = autocomplete.prefixCompletion(root, key, 0);
     List<LookupResult> res = new ArrayList<>();
     if (list == null || list.size() == 0) {
@@ -215,7 +222,7 @@ public class TSTLookup extends Lookup {
 
   /** Returns byte size of the underlying TST */
   @Override
-  public long sizeInBytes() {
+  public long ramBytesUsed() {
     long mem = RamUsageEstimator.shallowSizeOf(this);
     if (root != null) {
       mem += root.sizeInBytes();

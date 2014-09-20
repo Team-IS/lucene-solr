@@ -28,6 +28,7 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.IOUtils;
 
 /**
@@ -51,15 +52,14 @@ public class SimpleTextStoredFieldsWriter extends StoredFieldsWriter {
   final static BytesRef TYPE_FLOAT  = new BytesRef("float");
   final static BytesRef TYPE_DOUBLE = new BytesRef("double");
 
-  final static BytesRef END     = new BytesRef("END");
-  final static BytesRef DOC     = new BytesRef("doc ");
-  final static BytesRef NUM     = new BytesRef("  numfields ");
-  final static BytesRef FIELD   = new BytesRef("  field ");
-  final static BytesRef NAME    = new BytesRef("    name ");
-  final static BytesRef TYPE    = new BytesRef("    type ");
-  final static BytesRef VALUE   = new BytesRef("    value ");
+  final static BytesRef END      = new BytesRef("END");
+  final static BytesRef DOC      = new BytesRef("doc ");
+  final static BytesRef FIELD    = new BytesRef("  field ");
+  final static BytesRef NAME     = new BytesRef("    name ");
+  final static BytesRef TYPE     = new BytesRef("    type ");
+  final static BytesRef VALUE    = new BytesRef("    value ");
   
-  private final BytesRef scratch = new BytesRef();
+  private final BytesRefBuilder scratch = new BytesRefBuilder();
   
   public SimpleTextStoredFieldsWriter(Directory directory, String segment, IOContext context) throws IOException {
     this.directory = directory;
@@ -76,13 +76,9 @@ public class SimpleTextStoredFieldsWriter extends StoredFieldsWriter {
   }
 
   @Override
-  public void startDocument(int numStoredFields) throws IOException {
+  public void startDocument() throws IOException {
     write(DOC);
     write(Integer.toString(numDocsWritten));
-    newLine();
-    
-    write(NUM);
-    write(Integer.toString(numStoredFields));
     newLine();
     
     numDocsWritten++;
@@ -171,6 +167,7 @@ public class SimpleTextStoredFieldsWriter extends StoredFieldsWriter {
     }
     write(END);
     newLine();
+    SimpleTextUtil.writeChecksum(out, scratch);
   }
 
   @Override

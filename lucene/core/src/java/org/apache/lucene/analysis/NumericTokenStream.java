@@ -28,9 +28,11 @@ import org.apache.lucene.document.LongField; // for javadocs
 import org.apache.lucene.search.NumericRangeFilter; // for javadocs
 import org.apache.lucene.search.NumericRangeQuery;
 import org.apache.lucene.util.Attribute;
+import org.apache.lucene.util.AttributeFactory;
 import org.apache.lucene.util.AttributeImpl;
 import org.apache.lucene.util.AttributeReflector;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.NumericUtils;
 
 /**
@@ -145,7 +147,7 @@ public final class NumericTokenStream extends TokenStream {
   public static final class NumericTermAttributeImpl extends AttributeImpl implements NumericTermAttribute,TermToBytesRefAttribute {
     private long value = 0L;
     private int valueSize = 0, shift = 0, precisionStep = 0;
-    private BytesRef bytes = new BytesRef();
+    private BytesRefBuilder bytes = new BytesRefBuilder();
     
     /** 
      * Creates, but does not yet initialize this attribute instance
@@ -155,15 +157,17 @@ public final class NumericTokenStream extends TokenStream {
 
     @Override
     public BytesRef getBytesRef() {
-      return bytes;
+      return bytes.get();
     }
     
     @Override
-    public int fillBytesRef() {
+    public void fillBytesRef() {
       assert valueSize == 64 || valueSize == 32;
-      return (valueSize == 64) ? 
-        NumericUtils.longToPrefixCoded(value, shift, bytes) :
+      if (valueSize == 64) {
+        NumericUtils.longToPrefixCoded(value, shift, bytes);
+      } else {
         NumericUtils.intToPrefixCoded((int) value, shift, bytes);
+      }
     }
 
     @Override
@@ -197,7 +201,7 @@ public final class NumericTokenStream extends TokenStream {
     @Override
     public void reflectWith(AttributeReflector reflector) {
       fillBytesRef();
-      reflector.reflect(TermToBytesRefAttribute.class, "bytes", BytesRef.deepCopyOf(bytes));
+      reflector.reflect(TermToBytesRefAttribute.class, "bytes", bytes.toBytesRef());
       reflector.reflect(NumericTermAttribute.class, "shift", shift);
       reflector.reflect(NumericTermAttribute.class, "rawValue", getRawValue());
       reflector.reflect(NumericTermAttribute.class, "valueSize", valueSize);
@@ -212,7 +216,7 @@ public final class NumericTokenStream extends TokenStream {
   
   /**
    * Creates a token stream for numeric values using the default <code>precisionStep</code>
-   * {@link NumericUtils#PRECISION_STEP_DEFAULT} (4). The stream is not yet initialized,
+   * {@link NumericUtils#PRECISION_STEP_DEFAULT} (16). The stream is not yet initialized,
    * before using set a value using the various set<em>???</em>Value() methods.
    */
   public NumericTokenStream() {
@@ -231,7 +235,7 @@ public final class NumericTokenStream extends TokenStream {
   /**
    * Expert: Creates a token stream for numeric values with the specified
    * <code>precisionStep</code> using the given
-   * {@link org.apache.lucene.util.AttributeSource.AttributeFactory}.
+   * {@link org.apache.lucene.util.AttributeFactory}.
    * The stream is not yet initialized,
    * before using set a value using the various set<em>???</em>Value() methods.
    */

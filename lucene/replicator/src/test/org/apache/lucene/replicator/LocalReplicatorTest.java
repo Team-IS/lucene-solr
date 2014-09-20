@@ -32,6 +32,7 @@ import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.SnapshotDeletionPolicy;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.IOUtils;
 import org.junit.After;
 import org.junit.Before;
@@ -50,7 +51,7 @@ public class LocalReplicatorTest extends ReplicatorTestCase {
   public void setUp() throws Exception {
     super.setUp();
     sourceDir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, null);
+    IndexWriterConfig conf = newIndexWriterConfig(null);
     conf.setIndexDeletionPolicy(new SnapshotDeletionPolicy(conf.getIndexDeletionPolicy()));
     sourceWriter = new IndexWriter(sourceDir, conf);
     replicator = new LocalReplicator();
@@ -59,7 +60,8 @@ public class LocalReplicatorTest extends ReplicatorTestCase {
   @After
   @Override
   public void tearDown() throws Exception {
-    IOUtils.close(replicator, sourceWriter, sourceDir);
+    sourceWriter.close();
+    IOUtils.close(replicator, sourceDir);
     super.tearDown();
   }
   
@@ -117,35 +119,57 @@ public class LocalReplicatorTest extends ReplicatorTestCase {
   
   @Test
   public void testPublishSameRevision() throws IOException {
-    Revision rev = createRevision(1);
-    replicator.publish(rev);
-    SessionToken res = replicator.checkForUpdate(null);
-    assertNotNull(res);
-    assertEquals(rev.getVersion(), res.version);
-    replicator.release(res.id);
-    replicator.publish(new IndexRevision(sourceWriter));
-    res = replicator.checkForUpdate(res.version);
-    assertNull(res);
-    
-    // now make sure that publishing same revision doesn't leave revisions
-    // "locked", i.e. that replicator releases revisions even when they are not
-    // kept
-    replicator.publish(createRevision(2));
-    assertEquals(1, DirectoryReader.listCommits(sourceDir).size());
+    // we look to see that certain files are deleted:
+    if (sourceDir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)sourceDir).setEnableVirusScanner(false);
+    }
+    try {
+      Revision rev = createRevision(1);
+      replicator.publish(rev);
+      SessionToken res = replicator.checkForUpdate(null);
+      assertNotNull(res);
+      assertEquals(rev.getVersion(), res.version);
+      replicator.release(res.id);
+      replicator.publish(new IndexRevision(sourceWriter));
+      res = replicator.checkForUpdate(res.version);
+      assertNull(res);
+      
+      // now make sure that publishing same revision doesn't leave revisions
+      // "locked", i.e. that replicator releases revisions even when they are not
+      // kept
+      replicator.publish(createRevision(2));
+      assertEquals(1, DirectoryReader.listCommits(sourceDir).size());
+    } finally {
+      if (sourceDir instanceof MockDirectoryWrapper) {
+        // set back to on for other tests
+        ((MockDirectoryWrapper)sourceDir).setEnableVirusScanner(true);
+      }
+    }
   }
   
   @Test
   public void testPublishOlderRev() throws IOException {
-    replicator.publish(createRevision(1));
-    Revision old = new IndexRevision(sourceWriter);
-    replicator.publish(createRevision(2));
-    try {
-      replicator.publish(old);
-      fail("should have failed to publish an older revision");
-    } catch (IllegalArgumentException e) {
-      // expected
+    // we look to see that certain files are deleted:
+    if (sourceDir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)sourceDir).setEnableVirusScanner(false);
     }
-    assertEquals(1, DirectoryReader.listCommits(sourceDir).size());
+    try {
+      replicator.publish(createRevision(1));
+      Revision old = new IndexRevision(sourceWriter);
+      replicator.publish(createRevision(2));
+      try {
+        replicator.publish(old);
+        fail("should have failed to publish an older revision");
+      } catch (IllegalArgumentException e) {
+        // expected
+      }
+      assertEquals(1, DirectoryReader.listCommits(sourceDir).size());
+    } finally {
+      if (sourceDir instanceof MockDirectoryWrapper) {
+        // set back to on for other tests
+        ((MockDirectoryWrapper)sourceDir).setEnableVirusScanner(true);
+      }
+    }
   }
   
   @Test
@@ -186,12 +210,24 @@ public class LocalReplicatorTest extends ReplicatorTestCase {
   
   @Test
   public void testRevisionRelease() throws Exception {
-    replicator.publish(createRevision(1));
-    assertTrue(sourceDir.fileExists(IndexFileNames.SEGMENTS + "_1"));
-    replicator.publish(createRevision(2));
-    // now the files of revision 1 can be deleted
-    assertTrue(sourceDir.fileExists(IndexFileNames.SEGMENTS + "_2"));
-    assertFalse("segments_1 should not be found in index directory after revision is released", sourceDir.fileExists(IndexFileNames.SEGMENTS + "_1"));
+    // we look to see that certain files are deleted:
+    if (sourceDir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)sourceDir).setEnableVirusScanner(false);
+    }
+    
+    try {
+      replicator.publish(createRevision(1));
+      assertTrue(slowFileExists(sourceDir, IndexFileNames.SEGMENTS + "_1"));
+      replicator.publish(createRevision(2));
+      // now the files of revision 1 can be deleted
+      assertTrue(slowFileExists(sourceDir, IndexFileNames.SEGMENTS + "_2"));
+      assertFalse("segments_1 should not be found in index directory after revision is released", slowFileExists(sourceDir, IndexFileNames.SEGMENTS + "_1"));
+    } finally {
+      if (sourceDir instanceof MockDirectoryWrapper) {
+        // set back to on for other tests
+        ((MockDirectoryWrapper)sourceDir).setEnableVirusScanner(true);
+      }
+    }
   }
   
 }

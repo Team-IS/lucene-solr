@@ -17,14 +17,15 @@ package org.apache.lucene.analysis;
  * limitations under the License.
  */
 
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.io.Reader;
 import java.io.StringReader;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 
@@ -37,6 +38,7 @@ import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Attribute;
+import org.apache.lucene.util.AttributeFactory;
 import org.apache.lucene.util.AttributeImpl;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LineFileDocs;
@@ -502,7 +504,7 @@ public abstract class BaseTokenStreamTestCase extends LuceneTestCase {
         !(postingsFormat.equals("Memory") ||
             postingsFormat.equals("SimpleText"));
     if (rarely(random) && codecOk) {
-      dir = newFSDirectory(TestUtil.getTempDir("bttc"));
+      dir = newFSDirectory(createTempDir("bttc"));
       iw = new RandomIndexWriter(new Random(seed), dir, a);
     }
     boolean success = false;
@@ -532,12 +534,15 @@ public abstract class BaseTokenStreamTestCase extends LuceneTestCase {
           throw new RuntimeException("some thread(s) failed");
         }
       }
+      if (iw != null) {
+        iw.close();
+      }
       success = true;
     } finally {
       if (success) {
-        IOUtils.close(iw, dir);
+        IOUtils.close(dir);
       } else {
-        IOUtils.closeWhileHandlingException(iw, dir); // checkindex
+        IOUtils.closeWhileHandlingException(dir); // checkindex
       }
     }
   }
@@ -562,14 +567,12 @@ public abstract class BaseTokenStreamTestCase extends LuceneTestCase {
       if (random.nextBoolean()) {
         ft.setOmitNorms(true);
       }
-      String pf = TestUtil.getPostingsFormat("dummy");
-      boolean supportsOffsets = !doesntSupportOffsets.contains(pf);
       switch(random.nextInt(4)) {
         case 0: ft.setIndexOptions(IndexOptions.DOCS_ONLY); break;
         case 1: ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS); break;
         case 2: ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS); break;
         default:
-                if (supportsOffsets && offsetsAreCorrect) {
+                if (offsetsAreCorrect) {
                   ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
                 } else {
                   ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS);
@@ -683,11 +686,11 @@ public abstract class BaseTokenStreamTestCase extends LuceneTestCase {
     int remainder = random.nextInt(10);
     Reader reader = new StringReader(text);
     TokenStream ts = a.tokenStream("dummy", useCharFilter ? new MockCharFilter(reader, remainder) : reader);
-    CharTermAttribute termAtt = ts.hasAttribute(CharTermAttribute.class) ? ts.getAttribute(CharTermAttribute.class) : null;
-    OffsetAttribute offsetAtt = ts.hasAttribute(OffsetAttribute.class) ? ts.getAttribute(OffsetAttribute.class) : null;
-    PositionIncrementAttribute posIncAtt = ts.hasAttribute(PositionIncrementAttribute.class) ? ts.getAttribute(PositionIncrementAttribute.class) : null;
-    PositionLengthAttribute posLengthAtt = ts.hasAttribute(PositionLengthAttribute.class) ? ts.getAttribute(PositionLengthAttribute.class) : null;
-    TypeAttribute typeAtt = ts.hasAttribute(TypeAttribute.class) ? ts.getAttribute(TypeAttribute.class) : null;
+    CharTermAttribute termAtt = ts.getAttribute(CharTermAttribute.class);
+    OffsetAttribute offsetAtt = ts.getAttribute(OffsetAttribute.class);
+    PositionIncrementAttribute posIncAtt = ts.getAttribute(PositionIncrementAttribute.class);
+    PositionLengthAttribute posLengthAtt = ts.getAttribute(PositionLengthAttribute.class);
+    TypeAttribute typeAtt = ts.getAttribute(TypeAttribute.class);
     List<String> tokens = new ArrayList<>();
     List<String> types = new ArrayList<>();
     List<Integer> positions = new ArrayList<>();
@@ -892,7 +895,7 @@ public abstract class BaseTokenStreamTestCase extends LuceneTestCase {
   }
 
   protected void toDotFile(Analyzer a, String inputText, String localFileName) throws IOException {
-    Writer w = new OutputStreamWriter(new FileOutputStream(localFileName), "UTF-8");
+    Writer w = Files.newBufferedWriter(Paths.get(localFileName), StandardCharsets.UTF_8);
     final TokenStream ts = a.tokenStream("field", inputText);
     ts.reset();
     new TokenStreamToDot(inputText, ts, new PrintWriter(w)).toDot();
@@ -931,5 +934,23 @@ public abstract class BaseTokenStreamTestCase extends LuceneTestCase {
     mockTokenizer.setReader(new StringReader(input));
     return mockTokenizer;
   }
-
+  
+  /** Returns a random AttributeFactory impl */
+  public static AttributeFactory newAttributeFactory(Random random) {
+    switch (random.nextInt(3)) {
+      case 0:
+        return TokenStream.DEFAULT_TOKEN_ATTRIBUTE_FACTORY;
+      case 1:
+        return Token.TOKEN_ATTRIBUTE_FACTORY;
+      case 2:
+        return AttributeFactory.DEFAULT_ATTRIBUTE_FACTORY;
+      default:
+        throw new AssertionError("Please fix the Random.nextInt() call above");
+    }
+  }
+  
+  /** Returns a random AttributeFactory impl */
+  public static AttributeFactory newAttributeFactory() {
+    return newAttributeFactory(random());
+  }
 }

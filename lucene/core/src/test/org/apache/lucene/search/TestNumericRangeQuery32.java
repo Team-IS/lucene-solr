@@ -34,6 +34,7 @@ import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.NumericUtils;
 import org.apache.lucene.util.TestNumericUtils; // NaN arrays
@@ -60,7 +61,7 @@ public class TestNumericRangeQuery32 extends LuceneTestCase {
     distance = (1 << 30) / noDocs;
     directory = newDirectory();
     RandomIndexWriter writer = new RandomIndexWriter(random(), directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+        newIndexWriterConfig(new MockAnalyzer(random()))
         .setMaxBufferedDocs(TestUtil.nextInt(random(), 100, 1000))
         .setMergePolicy(newLogMergePolicy()));
     
@@ -300,7 +301,7 @@ public class TestNumericRangeQuery32 extends LuceneTestCase {
   public void testInfiniteValues() throws Exception {
     Directory dir = newDirectory();
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir,
-      newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+      newIndexWriterConfig(new MockAnalyzer(random())));
     Document doc = new Document();
     doc.add(new FloatField("float", Float.NEGATIVE_INFINITY, Field.Store.NO));
     doc.add(new IntField("int", Integer.MIN_VALUE, Field.Store.NO));
@@ -377,9 +378,12 @@ public class TestNumericRangeQuery32 extends LuceneTestCase {
       if (lower>upper) {
         int a=lower; lower=upper; upper=a;
       }
-      final BytesRef lowerBytes = new BytesRef(NumericUtils.BUF_SIZE_INT), upperBytes = new BytesRef(NumericUtils.BUF_SIZE_INT);
-      NumericUtils.intToPrefixCodedBytes(lower, 0, lowerBytes);
-      NumericUtils.intToPrefixCodedBytes(upper, 0, upperBytes);
+      final BytesRef lowerBytes, upperBytes;
+      BytesRefBuilder b = new BytesRefBuilder();
+      NumericUtils.intToPrefixCodedBytes(lower, 0, b);
+      lowerBytes = b.toBytesRef();
+      NumericUtils.intToPrefixCodedBytes(upper, 0, b);
+      upperBytes = b.toBytesRef();
 
       // test inclusive range
       NumericRangeQuery<Integer> tq=NumericRangeQuery.newIntRange(field, precisionStep, lower, upper, true, true);
@@ -563,46 +567,6 @@ public class TestNumericRangeQuery32 extends LuceneTestCase {
   @Test
   public void testFloatRange_2bit() throws Exception {
     testFloatRange(2);
-  }
-  
-  private void testSorting(int precisionStep) throws Exception {
-    String field="field"+precisionStep;
-    // 10 random tests, the index order is ascending,
-    // so using a reverse sort field should retun descending documents
-    int num = TestUtil.nextInt(random(), 10, 20);
-    for (int i = 0; i < num; i++) {
-      int lower=(int)(random().nextDouble()*noDocs*distance)+startOffset;
-      int upper=(int)(random().nextDouble()*noDocs*distance)+startOffset;
-      if (lower>upper) {
-        int a=lower; lower=upper; upper=a;
-      }
-      Query tq=NumericRangeQuery.newIntRange(field, precisionStep, lower, upper, true, true);
-      TopDocs topDocs = searcher.search(tq, null, noDocs, new Sort(new SortField(field, SortField.Type.INT, true)));
-      if (topDocs.totalHits==0) continue;
-      ScoreDoc[] sd = topDocs.scoreDocs;
-      assertNotNull(sd);
-      int last = searcher.doc(sd[0].doc).getField(field).numericValue().intValue();
-      for (int j=1; j<sd.length; j++) {
-        int act = searcher.doc(sd[j].doc).getField(field).numericValue().intValue();
-        assertTrue("Docs should be sorted backwards", last>act );
-        last=act;
-      }
-    }
-  }
-
-  @Test
-  public void testSorting_8bit() throws Exception {
-    testSorting(8);
-  }
-  
-  @Test
-  public void testSorting_4bit() throws Exception {
-    testSorting(4);
-  }
-  
-  @Test
-  public void testSorting_2bit() throws Exception {
-    testSorting(2);
   }
   
   @Test

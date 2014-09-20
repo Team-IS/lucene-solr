@@ -30,7 +30,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.lucene.util.LuceneTestCase.BadApple;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.client.solrj.SolrServer;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
@@ -86,8 +85,7 @@ public class OpenCloseCoreStressTest extends SolrTestCaseJ4 {
     coreNames = new ArrayList<>();
     cumulativeDocs = 0;
 
-    solrHomeDirectory = new File(TEMP_DIR, "OpenCloseCoreStressTest_");
-    FileUtils.deleteDirectory(solrHomeDirectory); // Ensure that a failed test didn't leave something lying around.
+    solrHomeDirectory = createTempDir().toFile();
 
     jetty = new JettySolrRunner(solrHomeDirectory.getAbsolutePath(), "/solr", 0, null, null, true, null, sslConfig);
   }
@@ -95,7 +93,6 @@ public class OpenCloseCoreStressTest extends SolrTestCaseJ4 {
   @After
   public void tearDownServer() throws Exception {
     if (jetty != null) jetty.stop();
-    FileUtils.deleteDirectory(solrHomeDirectory);
     for(SolrServer server:indexingServers) {
       server.shutdown();
     }
@@ -107,13 +104,18 @@ public class OpenCloseCoreStressTest extends SolrTestCaseJ4 {
   }
 
   @Test
-  @Slow
+  public void test5Seconds() throws Exception {
+    doStress(5, random().nextBoolean());
+  }
+  
+  @Test
+  @Nightly
   public void test15SecondsOld() throws Exception {
     doStress(15, true);
   }
 
   @Test
-  @Slow
+  @Nightly
   public void test15SecondsNew() throws Exception {
     doStress(15, false);
   }

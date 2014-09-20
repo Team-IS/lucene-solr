@@ -103,7 +103,7 @@ public class SpatialExample extends LuceneTestCase {
   }
 
   private void indexPoints() throws Exception {
-    IndexWriterConfig iwConfig = new IndexWriterConfig(TEST_VERSION_CURRENT,null);
+    IndexWriterConfig iwConfig = new IndexWriterConfig(null);
     IndexWriter indexWriter = new IndexWriter(directory, iwConfig);
 
     //Spatial4j is x-y order for arguments

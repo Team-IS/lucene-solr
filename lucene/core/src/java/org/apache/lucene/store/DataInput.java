@@ -18,12 +18,13 @@ package org.apache.lucene.store;
  */
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.BitUtil;
 
 /**
  * Abstract base class for performing read operations of Lucene's low-level
@@ -37,6 +38,19 @@ import org.apache.lucene.util.IOUtils;
  * resource, but positioned independently.
  */
 public abstract class DataInput implements Cloneable {
+
+  private static final int SKIP_BUFFER_SIZE = 1024;
+
+  /* This buffer is used to skip over bytes with the default implementation of
+   * skipBytes. The reason why we need to use an instance member instead of
+   * sharing a single instance across threads is that some delegating
+   * implementations of DataInput might want to reuse the provided buffer in
+   * order to eg. update the checksum. If we shared the same buffer across
+   * threads, then another thread might update the buffer while the checksum is
+   * being computed, making it invalid. See LUCENE-5583 for more information.
+   */
+  private byte[] skipBuffer;
+
   /** Reads and returns a single byte.
    * @see DataOutput#writeByte(byte)
    */
@@ -124,6 +138,15 @@ public abstract class DataInput implements Cloneable {
     throw new IOException("Invalid vInt detected (too many bits)");
   }
 
+  /**
+   * Read a {@link BitUtil#zigZagDecode(int) zig-zag}-encoded
+   * {@link #readVInt() variable-length} integer.
+   * @see DataOutput#writeZInt(int)
+   */
+  public int readZInt() throws IOException {
+    return BitUtil.zigZagDecode(readVInt());
+  }
+
   /** Reads eight bytes and returns a long.
    * @see DataOutput#writeLong(long)
    */
@@ -140,6 +163,10 @@ public abstract class DataInput implements Cloneable {
    * @see DataOutput#writeVLong(long)
    */
   public long readVLong() throws IOException {
+    return readVLong(false);
+  }
+
+  private long readVLong(boolean allowNegative) throws IOException {
     /* This is the original code of this method,
      * but a Hotspot bug (see LUCENE-2975) corrupts the for-loop if
      * readByte() is inlined. So the loop was unwinded!
@@ -178,7 +205,24 @@ public abstract class DataInput implements Cloneable {
     b = readByte();
     i |= (b & 0x7FL) << 56;
     if (b >= 0) return i;
-    throw new IOException("Invalid vLong detected (negative values disallowed)");
+    if (allowNegative) {
+      b = readByte();
+      i |= (b & 0x7FL) << 63;
+      if (b == 0 || b == 1) return i;
+      throw new IOException("Invalid vLong detected (more than 64 bits)");
+    } else {
+      throw new IOException("Invalid vLong detected (negative values disallowed)");
+    }
+  }
+
+  /**
+   * Read a {@link BitUtil#zigZagDecode(long) zig-zag}-encoded
+   * {@link #readVLong() variable-length} integer. Reads between one and ten
+   * bytes.
+   * @see DataOutput#writeZLong(long)
+   */
+  public long readZLong() throws IOException {
+    return BitUtil.zigZagDecode(readVLong(true));
   }
 
   /** Reads a string.
@@ -188,7 +232,7 @@ public abstract class DataInput implements Cloneable {
     int length = readVInt();
     final byte[] bytes = new byte[length];
     readBytes(bytes, 0, length);
-    return new String(bytes, 0, length, IOUtils.CHARSET_UTF_8);
+    return new String(bytes, 0, length, StandardCharsets.UTF_8);
   }
 
   /** Returns a clone of this stream.
@@ -234,4 +278,26 @@ public abstract class DataInput implements Cloneable {
 
     return set;
   }
+
+  /**
+   * Skip over <code>numBytes</code> bytes. The contract on this method is that it
+   * should have the same behavior as reading the same number of bytes into a
+   * buffer and discarding its content. Negative values of <code>numBytes</code>
+   * are not supported.
+   */
+  public void skipBytes(final long numBytes) throws IOException {
+    if (numBytes < 0) {
+      throw new IllegalArgumentException("numBytes must be >= 0, got " + numBytes);
+    }
+    if (skipBuffer == null) {
+      skipBuffer = new byte[SKIP_BUFFER_SIZE];
+    }
+    assert skipBuffer.length == SKIP_BUFFER_SIZE;
+    for (long skipped = 0; skipped < numBytes; ) {
+      final int step = (int) Math.min(SKIP_BUFFER_SIZE, numBytes - skipped);
+      readBytes(skipBuffer, 0, step, false);
+      skipped += step;
+    }
+  }
+
 }

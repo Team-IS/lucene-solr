@@ -17,8 +17,8 @@ package org.apache.lucene.index;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
@@ -32,18 +32,16 @@ import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.TestUtil;
-import org.apache.lucene.util.TestUtil;
 
 public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
 
-  File path;
+  Path path;
     
   /**
    * LUCENE-3627: This test fails.
    */
   public void testCrashCorruptsIndexing() throws Exception {
-    path = TestUtil.getTempDir("testCrashCorruptsIndexing");
+    path = createTempDir("testCrashCorruptsIndexing");
         
     indexAndCrashOnCreateOutputSegments2();
 
@@ -66,13 +64,13 @@ public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
     // NOTE: cannot use RandomIndexWriter because it
     // sometimes commits:
     IndexWriter indexWriter = new IndexWriter(crashAfterCreateOutput,
-                                              newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+                                              newIndexWriterConfig(new MockAnalyzer(random())));
             
     indexWriter.addDocument(getDocument());
     // writes segments_1:
     indexWriter.commit();
             
-    crashAfterCreateOutput.setCrashAfterCreateOutput("segments_2");
+    crashAfterCreateOutput.setCrashAfterCreateOutput("pending_segments_2");
     indexWriter.addDocument(getDocument());
     try {
       // tries to write segments_2 but hits fake exc:
@@ -83,7 +81,7 @@ public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
     }
     // writes segments_3
     indexWriter.close();
-    assertFalse(realDirectory.fileExists("segments_2"));
+    assertFalse(slowFileExists(realDirectory, "segments_2"));
     crashAfterCreateOutput.close();
   }
     
@@ -97,13 +95,13 @@ public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
     // it doesn't know what to do with the created but empty
     // segments_2 file
     IndexWriter indexWriter = new IndexWriter(realDirectory,
-                                              newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+                                              newIndexWriterConfig(new MockAnalyzer(random())));
             
     // currently the test fails above.
     // however, to test the fix, the following lines should pass as well.
     indexWriter.addDocument(getDocument());
     indexWriter.close();
-    assertFalse(realDirectory.fileExists("segments_2"));
+    assertFalse(slowFileExists(realDirectory, "segments_2"));
     realDirectory.close();
   }
     

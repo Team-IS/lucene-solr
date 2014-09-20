@@ -61,8 +61,7 @@ public class AssociationsFacetsExample {
   
   /** Build the example index. */
   private void index() throws IOException {
-    IndexWriterConfig iwc = new IndexWriterConfig(FacetExamples.EXAMPLES_VER, 
-                                                  new WhitespaceAnalyzer(FacetExamples.EXAMPLES_VER));
+    IndexWriterConfig iwc = new IndexWriterConfig(new WhitespaceAnalyzer());
     IndexWriter indexWriter = new IndexWriter(indexDir, iwc);
 
     // Writes facet ords to a separate directory from the main index

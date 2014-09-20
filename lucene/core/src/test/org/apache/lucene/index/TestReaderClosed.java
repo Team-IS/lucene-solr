@@ -37,8 +37,8 @@ public class TestReaderClosed extends LuceneTestCase {
     super.setUp();
     dir = newDirectory();
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir, 
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.KEYWORD, false))
-        .setMaxBufferedDocs(TestUtil.nextInt(random(), 50, 1000)));
+        newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.KEYWORD, false))
+          .setMaxBufferedDocs(TestUtil.nextInt(random(), 50, 1000)));
     
     Document doc = new Document();
     Field field = newStringField("field", "", Field.Store.NO);
@@ -87,7 +87,7 @@ public class TestReaderClosed extends LuceneTestCase {
         ace.getMessage()
       );
     } finally {
-      // shutdown executor: in case of wrap-wrap-wrapping
+      // close executor: in case of wrap-wrap-wrapping
       searcher.getIndexReader().close();
     }
   }

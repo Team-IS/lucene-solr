@@ -16,11 +16,15 @@ package org.apache.solr.handler.dataimport;
  * limitations under the License.
  */
 
+import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
 import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
@@ -37,13 +41,11 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
   @Test
   @SuppressWarnings("unchecked")
   public void testSimple() throws IOException {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    tmpdir.deleteOnExit();
-    createFile(tmpdir, "a.xml", "a.xml".getBytes("UTF-8"), false);
-    createFile(tmpdir, "b.xml", "b.xml".getBytes("UTF-8"), false);
-    createFile(tmpdir, "c.props", "c.props".getBytes("UTF-8"), false);
+    File tmpdir = createTempDir().toFile();
+
+    createFile(tmpdir, "a.xml", "a.xml".getBytes(StandardCharsets.UTF_8), false);
+    createFile(tmpdir, "b.xml", "b.xml".getBytes(StandardCharsets.UTF_8), false);
+    createFile(tmpdir, "c.props", "c.props".getBytes(StandardCharsets.UTF_8), false);
     Map attrs = createMap(
             FileListEntityProcessor.FILE_NAME, "xml$",
             FileListEntityProcessor.BASE_DIR, tmpdir.getAbsolutePath());
@@ -63,25 +65,25 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
   
   @Test
   public void testBiggerSmallerFiles() throws IOException {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
+    File tmpdir = File.createTempFile("test", "tmp", createTempDir().toFile());
+    Files.delete(tmpdir.toPath());
     tmpdir.mkdir();
-    tmpdir.deleteOnExit();
+
     long minLength = Long.MAX_VALUE;
     String smallestFile = "";
-    byte[] content = "abcdefgij".getBytes("UTF-8");
+    byte[] content = "abcdefgij".getBytes(StandardCharsets.UTF_8);
     createFile(tmpdir, "a.xml", content, false);
     if (minLength > content.length) {
       minLength = content.length;
       smallestFile = "a.xml";
     }
-    content = "abcdefgij".getBytes("UTF-8");
+    content = "abcdefgij".getBytes(StandardCharsets.UTF_8);
     createFile(tmpdir, "b.xml", content, false);
     if (minLength > content.length) {
       minLength = content.length;
       smallestFile = "b.xml";
     }
-    content = "abc".getBytes("UTF-8");
+    content = "abc".getBytes(StandardCharsets.UTF_8);
     createFile(tmpdir, "c.props", content, false);
     if (minLength > content.length) {
       minLength = content.length;
@@ -133,13 +135,11 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
 
   @Test
   public void testNTOT() throws IOException {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    tmpdir.deleteOnExit();
-    createFile(tmpdir, "a.xml", "a.xml".getBytes("UTF-8"), true);
-    createFile(tmpdir, "b.xml", "b.xml".getBytes("UTF-8"), true);
-    createFile(tmpdir, "c.props", "c.props".getBytes("UTF-8"), true);
+    File tmpdir = createTempDir().toFile();
+
+    createFile(tmpdir, "a.xml", "a.xml".getBytes(StandardCharsets.UTF_8), true);
+    createFile(tmpdir, "b.xml", "b.xml".getBytes(StandardCharsets.UTF_8), true);
+    createFile(tmpdir, "c.props", "c.props".getBytes(StandardCharsets.UTF_8), true);
     Map attrs = createMap(
             FileListEntityProcessor.FILE_NAME, "xml$",
             FileListEntityProcessor.BASE_DIR, tmpdir.getAbsolutePath(),
@@ -161,7 +161,7 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
     VariableResolver resolver = new VariableResolver();
     String lastMod = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new Date(System.currentTimeMillis() - 50000));
     resolver.addNamespace("a", createMap("x", lastMod));
-    createFile(tmpdir, "t.xml", "t.xml".getBytes("UTF-8"), false);
+    createFile(tmpdir, "t.xml", "t.xml".getBytes(StandardCharsets.UTF_8), false);
     fList = getFiles(resolver, attrs);
     assertEquals(1, fList.size());
     assertEquals("File name must be t.xml", new File(tmpdir, "t.xml").getAbsolutePath(), fList.get(0));
@@ -169,16 +169,12 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
 
   @Test
   public void testRECURSION() throws IOException {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    tmpdir.deleteOnExit();
+    File tmpdir = createTempDir().toFile();
     File childdir = new File(tmpdir + "/child" );
-    childdir.mkdirs();
-    childdir.deleteOnExit();
-    createFile(childdir, "a.xml", "a.xml".getBytes("UTF-8"), true);
-    createFile(childdir, "b.xml", "b.xml".getBytes("UTF-8"), true);
-    createFile(childdir, "c.props", "c.props".getBytes("UTF-8"), true);
+    childdir.mkdir();
+    createFile(childdir, "a.xml", "a.xml".getBytes(StandardCharsets.UTF_8), true);
+    createFile(childdir, "b.xml", "b.xml".getBytes(StandardCharsets.UTF_8), true);
+    createFile(childdir, "c.props", "c.props".getBytes(StandardCharsets.UTF_8), true);
     Map attrs = createMap(
             FileListEntityProcessor.FILE_NAME, "^.*\\.xml$",
             FileListEntityProcessor.BASE_DIR, childdir.getAbsolutePath(),

@@ -17,6 +17,7 @@
 package org.apache.solr.search;
 
 import com.spatial4j.core.distance.DistanceUtils;
+
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.queries.function.BoostedQuery;
@@ -35,13 +36,15 @@ import org.apache.lucene.search.spell.LevensteinDistance;
 import org.apache.lucene.search.spell.NGramDistance;
 import org.apache.lucene.search.spell.StringDistance;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.UnicodeUtil;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.request.SolrRequestInfo;
 import org.apache.solr.schema.*;
-
 import org.apache.solr.search.function.CollapseScoreFunction;
+import org.apache.solr.search.function.OrdFieldSource;
+import org.apache.solr.search.function.ReverseOrdFieldSource;
 import org.apache.solr.search.function.distance.*;
 import org.apache.solr.util.plugin.NamedListInitializedPlugin;
 
@@ -591,7 +594,7 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
       @Override
       public ValueSource parse(FunctionQParser fp) throws SyntaxError {
         TInfo tinfo = parseTerm(fp);
-        return new DocFreqValueSource(tinfo.field, tinfo.val, tinfo.indexedField, tinfo.indexedBytes);
+        return new DocFreqValueSource(tinfo.field, tinfo.val, tinfo.indexedField, tinfo.indexedBytes.get());
       }
     });
 
@@ -599,7 +602,7 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
       @Override
       public ValueSource parse(FunctionQParser fp) throws SyntaxError {
         TInfo tinfo = parseTerm(fp);
-        return new TotalTermFreqValueSource(tinfo.field, tinfo.val, tinfo.indexedField, tinfo.indexedBytes);
+        return new TotalTermFreqValueSource(tinfo.field, tinfo.val, tinfo.indexedField, tinfo.indexedBytes.get());
       }
     });
     alias("totaltermfreq","ttf");
@@ -617,7 +620,7 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
       @Override
       public ValueSource parse(FunctionQParser fp) throws SyntaxError {
         TInfo tinfo = parseTerm(fp);
-        return new IDFValueSource(tinfo.field, tinfo.val, tinfo.indexedField, tinfo.indexedBytes);
+        return new IDFValueSource(tinfo.field, tinfo.val, tinfo.indexedField, tinfo.indexedBytes.get());
       }
     });
 
@@ -625,7 +628,7 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
       @Override
       public ValueSource parse(FunctionQParser fp) throws SyntaxError {
         TInfo tinfo = parseTerm(fp);
-        return new TermFreqValueSource(tinfo.field, tinfo.val, tinfo.indexedField, tinfo.indexedBytes);
+        return new TermFreqValueSource(tinfo.field, tinfo.val, tinfo.indexedField, tinfo.indexedBytes.get());
       }
     });
 
@@ -633,7 +636,7 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
       @Override
       public ValueSource parse(FunctionQParser fp) throws SyntaxError {
         TInfo tinfo = parseTerm(fp);
-        return new TFValueSource(tinfo.field, tinfo.val, tinfo.indexedField, tinfo.indexedBytes);
+        return new TFValueSource(tinfo.field, tinfo.val, tinfo.indexedField, tinfo.indexedBytes.get());
       }
     });
 
@@ -793,7 +796,7 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
 
     tinfo.indexedField = tinfo.field = fp.parseArg();
     tinfo.val = fp.parseArg();
-    tinfo.indexedBytes = new BytesRef();
+    tinfo.indexedBytes = new BytesRefBuilder();
 
     FieldType ft = fp.getReq().getSchema().getFieldTypeNoEx(tinfo.field);
     if (ft == null) ft = new StrField();
@@ -807,7 +810,7 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
         tinfo.indexedField = term.field();
         indexedVal = term.text();
       }
-      UnicodeUtil.UTF16toUTF8(indexedVal, 0, indexedVal.length(), tinfo.indexedBytes);
+      tinfo.indexedBytes.copyChars(indexedVal);
     } else {
       ft.readableToIndexed(tinfo.val, tinfo.indexedBytes);
     }
@@ -869,14 +872,14 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
     String field;
     String val;
     String indexedField;
-    BytesRef indexedBytes;
+    BytesRefBuilder indexedBytes;
   }
 
 }
 
 
 class DateValueSourceParser extends ValueSourceParser {
-  DateField df = new TrieDateField();
+  TrieDateField df = new TrieDateField();
 
   @Override
   public void init(NamedList args) {
@@ -893,9 +896,6 @@ class DateValueSourceParser extends ValueSourceParser {
   public ValueSource getValueSource(FunctionQParser fp, String arg) {
     if (arg == null) return null;
     SchemaField f = fp.req.getSchema().getField(arg);
-    if (f.getType().getClass() == DateField.class) {
-      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Can't use ms() function on non-numeric legacy date field " + arg);
-    }
     return f.getType().getValueSource(f, fp);
   }
 

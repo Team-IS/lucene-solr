@@ -18,18 +18,13 @@ package org.apache.lucene.analysis.standard;
  */
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
 
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.TypeAttribute;
-import org.apache.lucene.util.AttributeSource;
-import org.apache.lucene.util.Version;
-import org.apache.lucene.util.AttributeSource.AttributeFactory;
+import org.apache.lucene.util.AttributeFactory;
 
 /**
  * This class implements Word Break rules from the Unicode Text Segmentation 
@@ -84,7 +79,11 @@ public final class UAX29URLEmailTokenizer extends Tokenizer {
   /** Set the max allowed token length.  Any token longer
    *  than this is skipped. */
   public void setMaxTokenLength(int length) {
+    if (length < 1) {
+      throw new IllegalArgumentException("maxTokenLength must be greater than zero");
+    }
     this.maxTokenLength = length;
+    scanner.setBufferSize(Math.min(length, 1024 * 1024)); // limit buffer size to 1M chars
   }
 
   /** @see #setMaxTokenLength */
@@ -97,19 +96,19 @@ public final class UAX29URLEmailTokenizer extends Tokenizer {
    * the <code>input</code> to the newly created JFlex scanner.
 
    */
-  public UAX29URLEmailTokenizer(Version matchVersion) {
-    this.scanner = getScannerFor(matchVersion);
+  public UAX29URLEmailTokenizer() {
+    this.scanner = getScanner();
   }
 
   /**
    * Creates a new UAX29URLEmailTokenizer with a given {@link AttributeFactory} 
    */
-  public UAX29URLEmailTokenizer(Version matchVersion, AttributeFactory factory) {
+  public UAX29URLEmailTokenizer(AttributeFactory factory) {
     super(factory);
-    this.scanner = getScannerFor(matchVersion);
+    this.scanner = getScanner();
   }
 
-  private StandardTokenizerInterface getScannerFor(Version matchVersion) {
+  private StandardTokenizerInterface getScanner() {
     return new UAX29URLEmailTokenizerImpl(input);
   }
 

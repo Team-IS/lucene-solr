@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.Set;
 
+import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.IOContext;
@@ -80,13 +81,16 @@ public class BlockDirectory extends Directory {
     
     @Override
     public void renameCacheFile(String source, String dest) {}
+
+    @Override
+    public void releaseResources() {}
   };
   
-  private Directory directory;
-  private int blockSize;
-  private String dirName;
+  private final Directory directory;
+  private final int blockSize;
+  private final String dirName;
   private final Cache cache;
-  private Set<String> blockCacheFileTypes;
+  private final Set<String> blockCacheFileTypes;
   private final boolean blockCacheReadEnabled;
   private final boolean blockCacheWriteEnabled;
 
@@ -238,6 +242,7 @@ public class BlockDirectory extends Directory {
       // the local file system folder may be gone
     } finally {
       directory.close();
+      cache.releaseResources();
     }
   }
   
@@ -247,7 +252,7 @@ public class BlockDirectory extends Directory {
   
   private long getFileModified(String name) throws IOException {
     if (directory instanceof FSDirectory) {
-      File directory = ((FSDirectory) this.directory).getDirectory();
+      File directory = ((FSDirectory) this.directory).getDirectory().toFile();
       File file = new File(directory, name);
       if (!file.exists()) {
         throw new FileNotFoundException("File [" + name + "] not found");
@@ -336,7 +341,9 @@ public class BlockDirectory extends Directory {
    * file/context.
    */
   boolean useWriteCache(String name, IOContext context) {
-    if (!blockCacheWriteEnabled) {
+    if (!blockCacheWriteEnabled || name.startsWith(IndexFileNames.PENDING_SEGMENTS)) {
+      // for safety, don't bother caching pending commits.
+      // the cache does support renaming (renameCacheFile), but thats a scary optimization.
       return false;
     }
     if (blockCacheFileTypes != null && !isCachableFile(name)) {
@@ -369,10 +376,11 @@ public class BlockDirectory extends Directory {
     directory.deleteFile(name);
   }
   
-  public boolean fileExists(String name) throws IOException {
-    return directory.fileExists(name);
+  @Override
+  public void renameFile(String source, String dest) throws IOException {
+    directory.renameFile(source, dest);
   }
-  
+
   public long fileLength(String name) throws IOException {
     return directory.fileLength(name);
   }

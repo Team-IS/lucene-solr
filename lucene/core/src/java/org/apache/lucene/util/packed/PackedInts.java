@@ -19,12 +19,14 @@ package org.apache.lucene.util.packed;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
 
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.LongsRef;
 import org.apache.lucene.util.RamUsageEstimator;
 
@@ -49,9 +51,9 @@ public class PackedInts {
   public static final float FAST = 0.5f;
 
   /**
-   * At most 20% memory overhead.
+   * At most 25% memory overhead.
    */
-  public static final float DEFAULT = 0.2f;
+  public static final float DEFAULT = 0.25f;
 
   /**
    * No memory overhead at all, but the returned implementation may be slow.
@@ -66,7 +68,8 @@ public class PackedInts {
   public final static String CODEC_NAME = "PackedInts";
   public final static int VERSION_START = 0; // PackedInts were long-aligned
   public final static int VERSION_BYTE_ALIGNED = 1;
-  public final static int VERSION_CURRENT = VERSION_BYTE_ALIGNED;
+  public static final int VERSION_MONOTONIC_WITHOUT_ZIGZAG = 2;
+  public final static int VERSION_CURRENT = VERSION_MONOTONIC_WITHOUT_ZIGZAG;
 
   /**
    * Check the validity of a version number.
@@ -452,7 +455,7 @@ public class PackedInts {
    * A read-only random access array of positive integers.
    * @lucene.internal
    */
-  public static abstract class Reader extends NumericDocValues {
+  public static abstract class Reader extends NumericDocValues implements Accountable {
 
     /**
      * Bulk get: read at least one and at most <code>len</code> longs starting
@@ -472,47 +475,14 @@ public class PackedInts {
     }
 
     /**
-     * @return the number of bits used to store any given value.
-     *         Note: This does not imply that memory usage is
-     *         {@code bitsPerValue * #values} as implementations are free to
-     *         use non-space-optimal packing of bits.
-     */
-    public abstract int getBitsPerValue();
-
-    /**
      * @return the number of values.
      */
     public abstract int size();
 
-    /**
-     * Return the in-memory size in bytes.
-     */
-    public abstract long ramBytesUsed();
-
-    /**
-     * Expert: if the bit-width of this reader matches one of
-     * java's native types, returns the underlying array
-     * (ie, byte[], short[], int[], long[]); else, returns
-     * null.  Note that when accessing the array you must
-     * upgrade the type (bitwise AND with all ones), to
-     * interpret the full value as unsigned.  Ie,
-     * bytes[idx]&0xFF, shorts[idx]&0xFFFF, etc.
-     */
-    public Object getArray() {
-      assert !hasArray();
-      return null;
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Collections.emptyList();
     }
-
-    /**
-     * Returns true if this implementation is backed by a
-     * native java array.
-     *
-     * @see #getArray
-     */
-    public boolean hasArray() {
-      return false;
-    }
-
   }
 
   /**
@@ -570,6 +540,14 @@ public class PackedInts {
    * @lucene.internal
    */
   public static abstract class Mutable extends Reader {
+
+    /**
+     * @return the number of bits used to store any given value.
+     *         Note: This does not imply that memory usage is
+     *         {@code bitsPerValue * #values} as implementations are free to
+     *         use non-space-optimal packing of bits.
+     */
+    public abstract int getBitsPerValue();
 
     /**
      * Set the value at the given index in the array.
@@ -641,12 +619,9 @@ public class PackedInts {
    * @lucene.internal
    */
   static abstract class ReaderImpl extends Reader {
-    protected final int bitsPerValue;
     protected final int valueCount;
 
-    protected ReaderImpl(int valueCount, int bitsPerValue) {
-      this.bitsPerValue = bitsPerValue;
-      assert bitsPerValue > 0 && bitsPerValue <= 64 : "bitsPerValue=" + bitsPerValue;
+    protected ReaderImpl(int valueCount) {
       this.valueCount = valueCount;
     }
 
@@ -654,15 +629,9 @@ public class PackedInts {
     public abstract long get(int index);
 
     @Override
-    public final int getBitsPerValue() {
-      return bitsPerValue;
-    }
-
-    @Override
     public final int size() {
       return valueCount;
     }
-
   }
 
   static abstract class MutableImpl extends Mutable {
@@ -686,6 +655,10 @@ public class PackedInts {
       return valueCount;
     }
 
+    @Override
+    public String toString() {
+      return getClass().getSimpleName() + "(valueCount=" + valueCount + ",bitsPerValue=" + bitsPerValue + ")";
+    }
   }
 
   /** A {@link Reader} which has all its values equal to 0 (bitsPerValue = 0). */
@@ -713,11 +686,6 @@ public class PackedInts {
     }
 
     @Override
-    public int getBitsPerValue() {
-      return 0;
-    }
-
-    @Override
     public int size() {
       return valueCount;
     }
@@ -726,7 +694,6 @@ public class PackedInts {
     public long ramBytesUsed() {
       return RamUsageEstimator.alignObjectSize(RamUsageEstimator.NUM_BYTES_OBJECT_HEADER + RamUsageEstimator.NUM_BYTES_INT);
     }
-
   }
 
   /** A write-once Writer.
@@ -1171,6 +1138,7 @@ public class PackedInts {
 
   /** Returns how many bits are required to hold values up
    *  to and including maxValue
+   *  NOTE: This method returns at least 1.
    * @param maxValue the maximum value that should be representable.
    * @return the amount of bits needed to represent values from 0 to maxValue.
    * @lucene.internal
@@ -1179,7 +1147,16 @@ public class PackedInts {
     if (maxValue < 0) {
       throw new IllegalArgumentException("maxValue must be non-negative (got: " + maxValue + ")");
     }
-    return Math.max(1, 64 - Long.numberOfLeadingZeros(maxValue));
+    return unsignedBitsRequired(maxValue);
+  }
+
+  /** Returns how many bits are required to store <code>bits</code>,
+   * interpreted as an unsigned value.
+   * NOTE: This method returns at least 1.
+   * @lucene.internal
+   */
+  public static int unsignedBitsRequired(long bits) {
+    return Math.max(1, 64 - Long.numberOfLeadingZeros(bits));
   }
 
   /**

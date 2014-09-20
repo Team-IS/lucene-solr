@@ -60,6 +60,7 @@ import org.apache.lucene.index.StoredFieldVisitor;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.Collector;
@@ -71,9 +72,11 @@ import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
+import org.apache.lucene.search.MultiCollector;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TermQuery;
@@ -86,6 +89,7 @@ import org.apache.lucene.search.TopScoreDocCollector;
 import org.apache.lucene.search.TotalHitCountCollector;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.uninverting.UninvertingReader;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FixedBitSet;
@@ -166,9 +170,12 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
   private DirectoryFactory directoryFactory;
   
   private final AtomicReader atomicReader;
+  // only for addIndexes etc (no fieldcache)
+  private final DirectoryReader rawReader;
+  
   private String path;
   private final boolean reserveDirectory;
-  private final boolean createdDirectory; 
+  private boolean createdDirectory; 
   
   private static DirectoryReader getReader(SolrCore core, SolrIndexConfig config, DirectoryFactory directoryFactory, String path) throws IOException {
     DirectoryReader reader = null;
@@ -181,18 +188,63 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
     }
     return reader;
   }
+  
+  // TODO: wrap elsewhere and return a "map" from the schema that overrides get() ?
+  // this reader supports reopen
+  private static DirectoryReader wrapReader(SolrCore core, DirectoryReader reader) {
+    assert reader != null;
+    return UninvertingReader.wrap(reader, core.getLatestSchema().getUninversionMap(reader));
+  }
 
+  /**
+   * Builds the neccessary collector chain (via delegate wrapping) and executes the query 
+   * against it.  This method takes into consideration both the explicitly provided collector 
+   * and postFilter as well as any needed collector wrappers for dealing with options 
+   * specified in the QueryCOmmand.
+   */
+  private void buildAndRunCollectorChain(QueryResult qr, Query query, Filter luceneFilter,
+      Collector collector, QueryCommand cmd, DelegatingCollector postFilter) throws IOException {
+    
+    final boolean terminateEarly = (cmd.getFlags() & TERMINATE_EARLY) == TERMINATE_EARLY;
+    if (terminateEarly) {
+      collector = new EarlyTerminatingCollector(collector, cmd.len);
+    }
+
+    final long timeAllowed = cmd.getTimeAllowed();
+    if( timeAllowed > 0 ) {
+      collector = new TimeLimitingCollector(collector, TimeLimitingCollector.getGlobalCounter(), timeAllowed);
+    }
+    
+    if (postFilter != null) {
+      postFilter.setLastDelegate(collector);
+      collector = postFilter;
+    }
+    
+    try {
+      super.search(query, luceneFilter, collector);
+      if(collector instanceof DelegatingCollector) {
+        ((DelegatingCollector)collector).finish();
+      }
+    }
+    catch( TimeLimitingCollector.TimeExceededException x ) {
+      log.warn( "Query: " + query + "; " + x.getMessage() );
+      qr.setPartialResults(true);
+    }        
+  }
+  
   public SolrIndexSearcher(SolrCore core, String path, IndexSchema schema, SolrIndexConfig config, String name, boolean enableCache, DirectoryFactory directoryFactory) throws IOException {
     // we don't need to reserve the directory because we get it from the factory
-    this(core, path, schema, config, name, null, true, enableCache, false, directoryFactory);
+    this(core, path, schema, config, name, getReader(core, config, directoryFactory, path), true, enableCache, false, directoryFactory);
+    this.createdDirectory = true;
   }
 
   public SolrIndexSearcher(SolrCore core, String path, IndexSchema schema, SolrIndexConfig config, String name, DirectoryReader r, boolean closeReader, boolean enableCache, boolean reserveDirectory, DirectoryFactory directoryFactory) throws IOException {
-    super(r == null ? getReader(core, config, directoryFactory, path) : r);
+    super(wrapReader(core, r));
 
     this.path = path;
     this.directoryFactory = directoryFactory;
     this.reader = (DirectoryReader) super.readerContext.reader();
+    this.rawReader = r;
     this.atomicReader = SlowCompositeReaderWrapper.wrap(this.reader);
     this.core = core;
     this.schema = schema;
@@ -208,7 +260,6 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
     Directory dir = getIndexReader().directory();
     
     this.reserveDirectory = reserveDirectory;
-    this.createdDirectory = r == null;
     if (reserveDirectory) {
       // keep the directory from being released while we use it
       directoryFactory.incRef(dir);
@@ -300,6 +351,11 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
     return atomicReader;
   }
   
+  /** Raw reader (no fieldcaches etc). Useful for operations like addIndexes */
+  public final DirectoryReader getRawReader() {
+    return rawReader;
+  }
+  
   @Override
   public final DirectoryReader getIndexReader() {
     assert reader == super.getIndexReader();
@@ -348,7 +404,7 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
     
     long cpg = reader.getIndexCommit().getGeneration();
     try {
-      if (closeReader) reader.decRef();
+      if (closeReader) rawReader.decRef();
     } catch (Exception e) {
       SolrException.log(log, "Problem dec ref'ing reader", e);
     }
@@ -930,17 +986,17 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
         if (idIter == null) continue;
       }
 
-      collector.setNextReader(leaf);
+      final LeafCollector leafCollector = collector.getLeafCollector(leaf);
       int max = reader.maxDoc();
 
       if (idIter == null) {
         for (int docid = 0; docid<max; docid++) {
           if (liveDocs != null && !liveDocs.get(docid)) continue;
-          collector.collect(docid);
+          leafCollector.collect(docid);
         }
       } else {
         for (int docid = -1; (docid = idIter.advance(docid+1)) < max; ) {
-          collector.collect(docid);
+          leafCollector.collect(docid);
         }
       }
     }
@@ -1479,7 +1535,13 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
    *        TopDocsCollector to use.
    */
   private TopDocsCollector buildTopDocsCollector(int len, QueryCommand cmd) throws IOException {
-    
+
+    Query q = cmd.getQuery();
+    if(q instanceof RankQuery) {
+      RankQuery rq = (RankQuery)q;
+      return rq.getTopDocsCollector(len, cmd, this);
+    }
+
     if (null == cmd.getSort()) {
       assert null == cmd.getCursorMark() : "have cursor but no sort";
       return TopScoreDocCollector.create(len, true);
@@ -1499,7 +1561,6 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
   }
 
   private void getDocListNC(QueryResult qr,QueryCommand cmd) throws IOException {
-    final long timeAllowed = cmd.getTimeAllowed();
     int len = cmd.getSupersetMaxDoc();
     int last = len;
     if (last < 0 || last > maxDoc()) last=maxDoc();
@@ -1511,7 +1572,6 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
     float[] scores;
 
     boolean needScores = (cmd.getFlags() & GET_SCORES) != 0;
-    boolean terminateEarly = (cmd.getFlags() & TERMINATE_EARLY) == TERMINATE_EARLY;
     
     Query query = QueryUtils.makeQueryable(cmd.getQuery());
 
@@ -1526,16 +1586,10 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
       Collector collector;
 
       if (!needScores) {
-        collector = new Collector () {
-          @Override
-          public void setScorer(Scorer scorer) {
-          }
+        collector = new SimpleCollector () {
           @Override
           public void collect(int doc) {
             numHits[0]++;
-          }
-          @Override
-          public void setNextReader(AtomicReaderContext context) {
           }
           @Override
           public boolean acceptsDocsOutOfOrder() {
@@ -1543,7 +1597,7 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
           }
         };
       } else {
-        collector = new Collector() {
+        collector = new SimpleCollector() {
           Scorer scorer;
           @Override
           public void setScorer(Scorer scorer) {
@@ -1556,35 +1610,13 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
             if (score > topscore[0]) topscore[0]=score;            
           }
           @Override
-          public void setNextReader(AtomicReaderContext context) {
-          }
-          @Override
           public boolean acceptsDocsOutOfOrder() {
             return true;
           }
         };
       }
-      if (terminateEarly) {
-        collector = new EarlyTerminatingCollector(collector, cmd.len);
-      }
-      if( timeAllowed > 0 ) {
-        collector = new TimeLimitingCollector(collector, TimeLimitingCollector.getGlobalCounter(), timeAllowed);
-      }
-      if (pf.postFilter != null) {
-        pf.postFilter.setLastDelegate(collector);
-        collector = pf.postFilter;
-      }
-
-      try {
-        super.search(query, luceneFilter, collector);
-        if(collector instanceof DelegatingCollector) {
-          ((DelegatingCollector)collector).finish();
-        }
-      }
-      catch( TimeLimitingCollector.TimeExceededException x ) {
-        log.warn( "Query: " + query + "; " + x.getMessage() );
-        qr.setPartialResults(true);
-      }
+      
+      buildAndRunCollectorChain(qr, query, luceneFilter, collector, cmd, pf.postFilter);
 
       nDocsReturned=0;
       ids = new int[nDocsReturned];
@@ -1596,26 +1628,7 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
     } else {
       final TopDocsCollector topCollector = buildTopDocsCollector(len, cmd);
       Collector collector = topCollector;
-      if (terminateEarly) {
-        collector = new EarlyTerminatingCollector(collector, cmd.len);
-      }
-      if( timeAllowed > 0 ) {
-        collector = new TimeLimitingCollector(collector, TimeLimitingCollector.getGlobalCounter(), timeAllowed);
-      }
-      if (pf.postFilter != null) {
-        pf.postFilter.setLastDelegate(collector);
-        collector = pf.postFilter;
-      }
-      try {
-        super.search(query, luceneFilter, collector);
-        if(collector instanceof DelegatingCollector) {
-          ((DelegatingCollector)collector).finish();
-        }
-      }
-      catch( TimeLimitingCollector.TimeExceededException x ) {
-        log.warn( "Query: " + query + "; " + x.getMessage() );
-        qr.setPartialResults(true);
-      }
+      buildAndRunCollectorChain(qr, query, luceneFilter, collector, cmd, pf.postFilter);
 
       totalHits = topCollector.getTotalHits();
       TopDocs topDocs = topCollector.topDocs(0, len);
@@ -1652,7 +1665,6 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
     DocSet set;
 
     boolean needScores = (cmd.getFlags() & GET_SCORES) != 0;
-    boolean terminateEarly = (cmd.getFlags() & TERMINATE_EARLY) == TERMINATE_EARLY;
     int maxDoc = maxDoc();
     int smallSetSize = maxDoc>>6;
 
@@ -1660,59 +1672,42 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
     final Filter luceneFilter = pf.filter;
 
     Query query = QueryUtils.makeQueryable(cmd.getQuery());
-    final long timeAllowed = cmd.getTimeAllowed();
 
     // handle zero case...
     if (lastDocRequested<=0) {
       final float[] topscore = new float[] { Float.NEGATIVE_INFINITY };
 
       Collector collector;
-      DocSetCollector setCollector;
+      final DocSetCollector setCollector = new DocSetCollector(smallSetSize, maxDoc);
 
        if (!needScores) {
-         collector = setCollector = new DocSetCollector(smallSetSize, maxDoc);
+         collector = setCollector;
        } else {
-         collector = setCollector = new DocSetDelegateCollector(smallSetSize, maxDoc, new Collector() {
+         final Collector topScoreCollector = new SimpleCollector() {
+          
            Scorer scorer;
+           
            @Override
-          public void setScorer(Scorer scorer) {
-             this.scorer = scorer;
-           }
-           @Override
+          public void setScorer(Scorer scorer) throws IOException {
+            this.scorer = scorer;
+          }
+           
+          @Override
           public void collect(int doc) throws IOException {
-             float score = scorer.score();
-             if (score > topscore[0]) topscore[0]=score;
-           }
-           @Override
-          public void setNextReader(AtomicReaderContext context) {
-           }
-           @Override
+            float score = scorer.score();
+            if (score > topscore[0]) topscore[0] = score;
+          }
+          
+          @Override
           public boolean acceptsDocsOutOfOrder() {
-             return false;
-           }
-         });
+            return true;
+          }
+        };
+        
+        collector = MultiCollector.wrap(setCollector, topScoreCollector);
        }
-       if (terminateEarly) {
-         collector = new EarlyTerminatingCollector(collector, cmd.len);
-       }
-       if( timeAllowed > 0 ) {
-         collector = new TimeLimitingCollector(collector, TimeLimitingCollector.getGlobalCounter(), timeAllowed);
-       }
-      if (pf.postFilter != null) {
-        pf.postFilter.setLastDelegate(collector);
-        collector = pf.postFilter;
-      }
-
-       try {
-         super.search(query, luceneFilter, collector);
-         if(collector instanceof DelegatingCollector) {
-           ((DelegatingCollector)collector).finish();
-         }
-       }
-       catch( TimeLimitingCollector.TimeExceededException x ) {
-         log.warn( "Query: " + query + "; " + x.getMessage() );
-         qr.setPartialResults(true);
-       }
+       
+       buildAndRunCollectorChain(qr, query, luceneFilter, collector, cmd, pf.postFilter);
 
       set = setCollector.getDocSet();
 
@@ -1726,28 +1721,10 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
     } else {
 
       final TopDocsCollector topCollector = buildTopDocsCollector(len, cmd);
-      DocSetCollector setCollector = new DocSetDelegateCollector(maxDoc>>6, maxDoc, topCollector);
-      Collector collector = setCollector;
-      if (terminateEarly) {
-        collector = new EarlyTerminatingCollector(collector, cmd.len);
-      }
-      if( timeAllowed > 0 ) {
-        collector = new TimeLimitingCollector(collector, TimeLimitingCollector.getGlobalCounter(), timeAllowed );
-      }
-      if (pf.postFilter != null) {
-        pf.postFilter.setLastDelegate(collector);
-        collector = pf.postFilter;
-      }
-      try {
-        super.search(query, luceneFilter, collector);
-        if(collector instanceof DelegatingCollector) {
-          ((DelegatingCollector)collector).finish();
-        }
-      }
-      catch( TimeLimitingCollector.TimeExceededException x ) {
-        log.warn( "Query: " + query + "; " + x.getMessage() );
-        qr.setPartialResults(true);
-      }
+      DocSetCollector setCollector = new DocSetCollector(maxDoc>>6, maxDoc);
+      Collector collector = MultiCollector.wrap(topCollector, setCollector);
+
+      buildAndRunCollectorChain(qr, query, luceneFilter, collector, cmd, pf.postFilter);
 
       set = setCollector.getDocSet();      
 
@@ -2031,7 +2008,7 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
         AtomicReaderContext leaf = leafContexts.get(readerIndex++);
         base = leaf.docBase;
         end = base + leaf.reader().maxDoc();
-        topCollector.setNextReader(leaf);
+        topCollector.getLeafCollector(leaf);
         // we should never need to set the scorer given the settings for the collector
       }
       topCollector.collect(doc-base);
@@ -2233,7 +2210,7 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable,SolrIn
 
   @Override
   public String getSource() {
-    return "$URL$";
+    return null;
   }
 
   @Override
@@ -2487,6 +2464,11 @@ class FilterImpl extends Filter {
     @Override
     public Bits bits() throws IOException {
       return null;  // don't use random access
+    }
+
+    @Override
+    public long ramBytesUsed() {
+      return docIdSet != null ? docIdSet.ramBytesUsed() : 0L;
     }
   }
 

@@ -19,6 +19,7 @@ package org.apache.lucene.codecs.bloom;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -39,9 +40,11 @@ import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.DataOutput;
-import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
@@ -66,7 +69,7 @@ import org.apache.lucene.util.automaton.CompiledAutomaton;
  * </p>
  * <ul>
  * <li>BloomFilter (.blm) --&gt; Header, DelegatePostingsFormatName,
- * NumFilteredFields, Filter<sup>NumFilteredFields</sup></li>
+ * NumFilteredFields, Filter<sup>NumFilteredFields</sup>, Footer</li>
  * <li>Filter --&gt; FieldNumber, FuzzySet</li>
  * <li>FuzzySet --&gt;See {@link FuzzySet#serialize(DataOutput)}</li>
  * <li>Header --&gt; {@link CodecUtil#writeHeader CodecHeader}</li>
@@ -75,13 +78,16 @@ import org.apache.lucene.util.automaton.CompiledAutomaton;
  * <li>NumFilteredFields --&gt; {@link DataOutput#writeInt Uint32}</li>
  * <li>FieldNumber --&gt; {@link DataOutput#writeInt Uint32} The number of the
  * field in this segment</li>
+ * <li>Footer --&gt; {@link CodecUtil#writeFooter CodecFooter}</li>
  * </ul>
  * @lucene.experimental
  */
 public final class BloomFilteringPostingsFormat extends PostingsFormat {
   
   public static final String BLOOM_CODEC_NAME = "BloomFilter";
-  public static final int BLOOM_CODEC_VERSION = 1;
+  public static final int VERSION_START = 1;
+  public static final int VERSION_CHECKSUM = 2;
+  public static final int VERSION_CURRENT = VERSION_CHECKSUM;
   
   /** Extension of Bloom Filters file */
   static final String BLOOM_EXTENSION = "blm";
@@ -148,7 +154,7 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
     return new BloomFilteredFieldsProducer(state);
   }
   
-  public class BloomFilteredFieldsProducer extends FieldsProducer {
+  static class BloomFilteredFieldsProducer extends FieldsProducer {
     private FieldsProducer delegateFieldsProducer;
     HashMap<String,FuzzySet> bloomsByFieldName = new HashMap<>();
     
@@ -157,12 +163,11 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
       
       String bloomFileName = IndexFileNames.segmentFileName(
           state.segmentInfo.name, state.segmentSuffix, BLOOM_EXTENSION);
-      IndexInput bloomIn = null;
+      ChecksumIndexInput bloomIn = null;
       boolean success = false;
       try {
-        bloomIn = state.directory.openInput(bloomFileName, state.context);
-        CodecUtil.checkHeader(bloomIn, BLOOM_CODEC_NAME, BLOOM_CODEC_VERSION,
-            BLOOM_CODEC_VERSION);
+        bloomIn = state.directory.openChecksumInput(bloomFileName, state.context);
+        int version = CodecUtil.checkHeader(bloomIn, BLOOM_CODEC_NAME, VERSION_START, VERSION_CURRENT);
         // // Load the hash function used in the BloomFilter
         // hashFunction = HashFunction.forName(bloomIn.readString());
         // Load the delegate postings format
@@ -177,6 +182,11 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
           FuzzySet bloom = FuzzySet.deserialize(bloomIn);
           FieldInfo fieldInfo = state.fieldInfos.fieldInfo(fieldNum);
           bloomsByFieldName.put(fieldInfo.name, bloom);
+        }
+        if (version >= VERSION_CHECKSUM) {
+          CodecUtil.checkFooter(bloomIn);
+        } else {
+          CodecUtil.checkEOF(bloomIn);
         }
         IOUtils.close(bloomIn);
         success = true;
@@ -286,6 +296,16 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
       public boolean hasPayloads() {
         return delegateTerms.hasPayloads();
       }
+
+      @Override
+      public BytesRef getMin() throws IOException {
+        return delegateTerms.getMin();
+      }
+
+      @Override
+      public BytesRef getMax() throws IOException {
+        return delegateTerms.getMax();
+      }
     }
     
     final class BloomFilteredTermsEnum extends TermsEnum {
@@ -390,6 +410,26 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
       }
       return sizeInBytes;
     }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      List<Accountable> resources = new ArrayList<>();
+      resources.addAll(Accountables.namedAccountables("field", bloomsByFieldName));
+      if (delegateFieldsProducer != null) {
+        resources.add(Accountables.namedAccountable("delegate", delegateFieldsProducer));
+      }
+      return Collections.unmodifiableList(resources);
+    }
+
+    @Override
+    public void checkIntegrity() throws IOException {
+      delegateFieldsProducer.checkIntegrity();
+    }
+
+    @Override
+    public String toString() {
+      return getClass().getSimpleName() + "(fields=" + bloomsByFieldName.size() + ",delegate=" + delegateFieldsProducer + ")";
+    }
   }
   
   class BloomFilteredFieldsConsumer extends FieldsConsumer {
@@ -414,45 +454,45 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
       // afterwards:
       delegateFieldsConsumer.write(fields);
 
-      try {
-        for(String field : fields) {
-          Terms terms = fields.terms(field);
-          if (terms == null) {
-            continue;
+      for(String field : fields) {
+        Terms terms = fields.terms(field);
+        if (terms == null) {
+          continue;
+        }
+        FieldInfo fieldInfo = state.fieldInfos.fieldInfo(field);
+        TermsEnum termsEnum = terms.iterator(null);
+
+        FuzzySet bloomFilter = null;
+
+        DocsEnum docsEnum = null;
+        while (true) {
+          BytesRef term = termsEnum.next();
+          if (term == null) {
+            break;
           }
-          FieldInfo fieldInfo = state.fieldInfos.fieldInfo(field);
-          TermsEnum termsEnum = terms.iterator(null);
-
-          FuzzySet bloomFilter = null;
-
-          DocsEnum docsEnum = null;
-          while (true) {
-            BytesRef term = termsEnum.next();
-            if (term == null) {
+          if (bloomFilter == null) {
+            bloomFilter = bloomFilterFactory.getSetForField(state, fieldInfo);
+            if (bloomFilter == null) {
+              // Field not bloom'd
               break;
             }
-            if (bloomFilter == null) {
-              bloomFilter = bloomFilterFactory.getSetForField(state, fieldInfo);
-              if (bloomFilter == null) {
-                // Field not bloom'd
-                break;
-              }
-              assert bloomFilters.containsKey(field) == false;
-              bloomFilters.put(fieldInfo, bloomFilter);
-            }
-            // Make sure there's at least one doc for this term:
-            docsEnum = termsEnum.docs(null, docsEnum, 0);
-            if (docsEnum.nextDoc() != DocsEnum.NO_MORE_DOCS) {
-              bloomFilter.addValue(term);
-            }
+            assert bloomFilters.containsKey(field) == false;
+            bloomFilters.put(fieldInfo, bloomFilter);
+          }
+          // Make sure there's at least one doc for this term:
+          docsEnum = termsEnum.docs(null, docsEnum, 0);
+          if (docsEnum.nextDoc() != DocsEnum.NO_MORE_DOCS) {
+            bloomFilter.addValue(term);
           }
         }
-      } finally {
-        close();
       }
     }
 
+    @Override
     public void close() throws IOException {
+
+      delegateFieldsConsumer.close();
+
       // Now we are done accumulating values for these fields
       List<Entry<FieldInfo,FuzzySet>> nonSaturatedBlooms = new ArrayList<>();
       
@@ -466,10 +506,8 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
           state.segmentInfo.name, state.segmentSuffix, BLOOM_EXTENSION);
       IndexOutput bloomOutput = null;
       try {
-        bloomOutput = state.directory
-            .createOutput(bloomFileName, state.context);
-        CodecUtil.writeHeader(bloomOutput, BLOOM_CODEC_NAME,
-            BLOOM_CODEC_VERSION);
+        bloomOutput = state.directory.createOutput(bloomFileName, state.context);
+        CodecUtil.writeHeader(bloomOutput, BLOOM_CODEC_NAME, VERSION_CURRENT);
         // remember the name of the postings format we will delegate to
         bloomOutput.writeString(delegatePostingsFormat.getName());
         
@@ -481,6 +519,7 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
           bloomOutput.writeInt(fieldInfo.number);
           saveAppropriatelySizedBloomFilter(bloomOutput, bloomFilter, fieldInfo);
         }
+        CodecUtil.writeFooter(bloomOutput);
       } finally {
         IOUtils.close(bloomOutput);
       }

@@ -18,7 +18,6 @@ package org.apache.lucene.analysis.icu.segmentation;
  */
 
 import java.io.IOException;
-import java.io.Reader;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.BaseTokenStreamTestCase;
@@ -41,9 +40,9 @@ public class TestWithCJKBigramFilter extends BaseTokenStreamTestCase {
   private Analyzer analyzer = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      Tokenizer source = new ICUTokenizer(new DefaultICUTokenizerConfig(false));
+      Tokenizer source = new ICUTokenizer(newAttributeFactory(), new DefaultICUTokenizerConfig(false));
       TokenStream result = new CJKBigramFilter(source);
-      return new TokenStreamComponents(source, new StopFilter(TEST_VERSION_CURRENT, result, CharArraySet.EMPTY_SET));
+      return new TokenStreamComponents(source, new StopFilter(result, CharArraySet.EMPTY_SET));
     }
   };
   
@@ -56,12 +55,12 @@ public class TestWithCJKBigramFilter extends BaseTokenStreamTestCase {
   private Analyzer analyzer2 = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      Tokenizer source = new ICUTokenizer(new DefaultICUTokenizerConfig(false));
+      Tokenizer source = new ICUTokenizer(newAttributeFactory(), new DefaultICUTokenizerConfig(false));
       // we put this before the CJKBigramFilter, because the normalization might combine
       // some halfwidth katakana forms, which will affect the bigramming.
       TokenStream result = new ICUNormalizer2Filter(source);
       result = new CJKBigramFilter(source);
-      return new TokenStreamComponents(source, new StopFilter(TEST_VERSION_CURRENT, result, CharArraySet.EMPTY_SET));
+      return new TokenStreamComponents(source, new StopFilter(result, CharArraySet.EMPTY_SET));
     }
   };
   

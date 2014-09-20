@@ -18,13 +18,16 @@ package org.apache.lucene.search.spell;
  */
 
 import java.io.BufferedReader;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import org.apache.lucene.search.suggest.InputIterator;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.BytesRefIterator;
 import org.apache.lucene.util.IOUtils;
 
@@ -42,12 +45,12 @@ public class PlainTextDictionary implements Dictionary {
   private BufferedReader in;
 
   /**
-   * Creates a dictionary based on a File.
+   * Creates a dictionary based on a Path.
    * <p>
    * NOTE: content is treated as UTF-8
    */
-  public PlainTextDictionary(File file) throws IOException {
-    in = new BufferedReader(IOUtils.getDecodingReader(file, IOUtils.CHARSET_UTF_8));
+  public PlainTextDictionary(Path path) throws IOException {
+    in = Files.newBufferedReader(path, StandardCharsets.UTF_8);
   }
 
   /**
@@ -56,7 +59,7 @@ public class PlainTextDictionary implements Dictionary {
    * NOTE: content is treated as UTF-8
    */
   public PlainTextDictionary(InputStream dictFile) {
-    in = new BufferedReader(IOUtils.getDecodingReader(dictFile, IOUtils.CHARSET_UTF_8));
+    in = new BufferedReader(IOUtils.getDecodingReader(dictFile, StandardCharsets.UTF_8));
   }
 
   /**
@@ -73,7 +76,7 @@ public class PlainTextDictionary implements Dictionary {
 
   final class FileIterator implements BytesRefIterator {
     private boolean done = false;
-    private final BytesRef spare = new BytesRef();
+    private final BytesRefBuilder spare = new BytesRefBuilder();
     @Override
     public BytesRef next() throws IOException {
       if (done) {
@@ -85,7 +88,7 @@ public class PlainTextDictionary implements Dictionary {
         String line;
         if ((line = in.readLine()) != null) {
           spare.copyChars(line);
-          result = spare;
+          result = spare.get();
         } else {
           done = true;
           IOUtils.close(in);

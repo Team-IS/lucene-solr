@@ -17,6 +17,13 @@ package org.apache.lucene.search.join;
  * limitations under the License.
  */
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.*;
 import org.apache.lucene.index.*;
@@ -26,13 +33,6 @@ import org.apache.lucene.search.grouping.GroupDocs;
 import org.apache.lucene.search.grouping.TopGroups;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.*;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.Locale;
 
 public class TestBlockJoin extends LuceneTestCase {
 
@@ -64,8 +64,8 @@ public class TestBlockJoin extends LuceneTestCase {
   
   public void testEmptyChildFilter() throws Exception {
     final Directory dir = newDirectory();
-    final IndexWriterConfig config = new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    config.setMergePolicy(NoMergePolicy.NO_COMPOUND_FILES);
+    final IndexWriterConfig config = new IndexWriterConfig(new MockAnalyzer(random()));
+    config.setMergePolicy(NoMergePolicy.INSTANCE);
     // we don't want to merge - since we rely on certain segment setup
     final IndexWriter w = new IndexWriter(dir, config);
 
@@ -386,8 +386,7 @@ public class TestBlockJoin extends LuceneTestCase {
     final RandomIndexWriter w = new RandomIndexWriter(
         random(),
         dir,
-        newIndexWriterConfig(TEST_VERSION_CURRENT,
-            new MockAnalyzer(random())).setMergePolicy(NoMergePolicy.COMPOUND_FILES));
+        newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(NoMergePolicy.INSTANCE));
 
     // Cannot assert this since we use NoMergePolicy:
     w.setDoRandomForceMergeAssert(false);
@@ -451,7 +450,7 @@ public class TestBlockJoin extends LuceneTestCase {
       final String[] values = fields[fieldID] = new String[valueCount];
       for(int i=0;i<valueCount;i++) {
         values[i] = TestUtil.randomRealisticUnicodeString(random());
-        //values[i] = _TestUtil.randomSimpleString(random);
+        //values[i] = TestUtil.randomSimpleString(random());
       }
     }
 
@@ -511,9 +510,18 @@ public class TestBlockJoin extends LuceneTestCase {
       parentDoc.add(id);
       parentJoinDoc.add(id);
       parentJoinDoc.add(newStringField("isParent", "x", Field.Store.NO));
+      id = new NumericDocValuesField("parentID", parentDocID);
+      parentDoc.add(id);
+      parentJoinDoc.add(id);
+      parentJoinDoc.add(newStringField("isParent", "x", Field.Store.NO));
       for(int field=0;field<parentFields.length;field++) {
         if (random().nextDouble() < 0.9) {
-          Field f = newStringField("parent" + field, parentFields[field][random().nextInt(parentFields[field].length)], Field.Store.NO);
+          String s = parentFields[field][random().nextInt(parentFields[field].length)];
+          Field f = newStringField("parent" + field, s, Field.Store.NO);
+          parentDoc.add(f);
+          parentJoinDoc.add(f);
+
+          f = new SortedDocValuesField("parent" + field, new BytesRef(s));
           parentDoc.add(f);
           parentJoinDoc.add(f);
         }
@@ -548,10 +556,18 @@ public class TestBlockJoin extends LuceneTestCase {
         Field childID = new IntField("childID", childDocID, Field.Store.YES);
         childDoc.add(childID);
         joinChildDoc.add(childID);
+        childID = new NumericDocValuesField("childID", childDocID);
+        childDoc.add(childID);
+        joinChildDoc.add(childID);
 
         for(int childFieldID=0;childFieldID<childFields.length;childFieldID++) {
           if (random().nextDouble() < 0.9) {
-            Field f = newStringField("child" + childFieldID, childFields[childFieldID][random().nextInt(childFields[childFieldID].length)], Field.Store.NO);
+            String s = childFields[childFieldID][random().nextInt(childFields[childFieldID].length)];
+            Field f = newStringField("child" + childFieldID, s, Field.Store.NO);
+            childDoc.add(f);
+            joinChildDoc.add(f);
+
+            f = new SortedDocValuesField("child" + childFieldID, new BytesRef(s));
             childDoc.add(f);
             joinChildDoc.add(f);
           }
@@ -585,14 +601,14 @@ public class TestBlockJoin extends LuceneTestCase {
       }
     }
 
+    BytesRefBuilder term = new BytesRefBuilder();
     for(int deleteID : toDelete) {
       if (VERBOSE) {
         System.out.println("DELETE parentID=" + deleteID);
       }
-      BytesRef term = new BytesRef();
       NumericUtils.intToPrefixCodedBytes(deleteID, 0, term);
-      w.deleteDocuments(new Term("blockID", term));
-      joinW.deleteDocuments(new Term("blockID", term));
+      w.deleteDocuments(new Term("blockID", term.toBytesRef()));
+      joinW.deleteDocuments(new Term("blockID", term.toBytesRef()));
     }
 
     final IndexReader r = w.getReader();
@@ -604,8 +620,14 @@ public class TestBlockJoin extends LuceneTestCase {
       System.out.println("TEST: reader=" + r);
       System.out.println("TEST: joinReader=" + joinR);
 
+      Bits liveDocs = MultiFields.getLiveDocs(joinR);
       for(int docIDX=0;docIDX<joinR.maxDoc();docIDX++) {
-        System.out.println("  docID=" + docIDX + " doc=" + joinR.document(docIDX));
+        System.out.println("  docID=" + docIDX + " doc=" + joinR.document(docIDX) + " deleted?=" + (liveDocs != null && liveDocs.get(docIDX) == false));
+      }
+      DocsEnum parents = MultiFields.getTermDocsEnum(joinR, null, "isParent", new BytesRef("x"));
+      System.out.println("parent docIDs:");
+      while (parents.nextDoc() != DocsEnum.NO_MORE_DOCS) {
+        System.out.println("  " + parents.docID());
       }
     }
 
@@ -727,7 +749,7 @@ public class TestBlockJoin extends LuceneTestCase {
                                        parentAndChildSort);
 
       if (VERBOSE) {
-        System.out.println("\nTEST: normal index gets " + results.totalHits + " hits");
+        System.out.println("\nTEST: normal index gets " + results.totalHits + " hits; sort=" + parentAndChildSort);
         final ScoreDoc[] hits = results.scoreDocs;
         for(int hitIDX=0;hitIDX<hits.length;hitIDX++) {
           final StoredDocument doc = s.doc(hits[hitIDX].doc);
@@ -735,7 +757,7 @@ public class TestBlockJoin extends LuceneTestCase {
           System.out.println("  parentID=" + doc.get("parentID") + " childID=" + doc.get("childID") + " (docID=" + hits[hitIDX].doc + ")");
           FieldDoc fd = (FieldDoc) hits[hitIDX];
           if (fd.fields != null) {
-            System.out.print("    ");
+            System.out.print("    " + fd.fields.length + " sort values: ");
             for(Object o : fd.fields) {
               if (o instanceof BytesRef) {
                 System.out.print(((BytesRef) o).utf8ToString() + " ");
@@ -804,6 +826,7 @@ public class TestBlockJoin extends LuceneTestCase {
           Explanation explanation = joinS.explain(childJoinQuery, hit.doc);
           StoredDocument document = joinS.doc(hit.doc - 1);
           int childId = Integer.parseInt(document.get("childID"));
+          //System.out.println("  hit docID=" + hit.doc + " childId=" + childId + " parentId=" + document.get("parentID"));
           assertTrue(explanation.isMatch());
           assertEquals(hit.score, explanation.getValue(), 0.0f);
           assertEquals(String.format(Locale.ROOT, "Score based on child doc range from %d to %d", hit.doc - 1 - childId, hit.doc - 1), explanation.getDescription());
@@ -1133,7 +1156,7 @@ public class TestBlockJoin extends LuceneTestCase {
 
   public void testAdvanceSingleParentNoChild() throws Exception {
     Directory dir = newDirectory();
-    RandomIndexWriter w = new RandomIndexWriter(random(), dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(new LogDocMergePolicy()));
+    RandomIndexWriter w = new RandomIndexWriter(random(), dir, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(new LogDocMergePolicy()));
     Document parentDoc = new Document();
     parentDoc.add(newStringField("parent", "1", Field.Store.NO));
     parentDoc.add(newStringField("isparent", "yes", Field.Store.NO));

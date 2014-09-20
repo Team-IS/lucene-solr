@@ -20,6 +20,7 @@ package org.apache.solr.morphlines.solr;
 import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.Locale;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.solr.client.solrj.SolrServerException;
@@ -32,9 +33,8 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
-
-import org.kitesdk.morphline.api.Command;
 import org.kitesdk.morphline.api.Collector;
+import org.kitesdk.morphline.api.Command;
 import org.kitesdk.morphline.api.MorphlineContext;
 import org.kitesdk.morphline.api.Record;
 import org.kitesdk.morphline.base.Compiler;
@@ -47,7 +47,7 @@ import com.google.common.collect.ListMultimap;
 import com.typesafe.config.Config;
 
 public abstract class AbstractSolrMorphlineZkTestBase extends AbstractFullDistribZkTestBase {
-  private static final File solrHomeDirectory = new File(TEMP_DIR, AbstractSolrMorphlineZkTestBase.class.getName());
+  private static File solrHomeDirectory;
   
   protected static final String RESOURCES_DIR = getFile("morphlines-core.marker").getParent();  
   private static final File SOLR_INSTANCE_DIR = new File(RESOURCES_DIR + "/solr");
@@ -69,9 +69,11 @@ public abstract class AbstractSolrMorphlineZkTestBase extends AbstractFullDistri
   
   @BeforeClass
   public static void setupClass() throws Exception {
+    assumeFalse("This test fails on UNIX with Turkish default locale (https://issues.apache.org/jira/browse/SOLR-6387)",
+        new Locale("tr").getLanguage().equals(Locale.getDefault().getLanguage()));
+    solrHomeDirectory = createTempDir().toFile();
     AbstractZkTestCase.SOLRHOME = solrHomeDirectory;
     FileUtils.copyDirectory(SOLR_INSTANCE_DIR, solrHomeDirectory);
-    createTempDir();
   }
   
   @Override

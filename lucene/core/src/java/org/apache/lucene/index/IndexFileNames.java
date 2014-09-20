@@ -46,31 +46,18 @@ public final class IndexFileNames {
 
   /** Name of the index segment file */
   public static final String SEGMENTS = "segments";
-
-  /** Extension of gen file */
-  public static final String GEN_EXTENSION = "gen";
   
+  /** Name of pending index segment file */
+  public static final String PENDING_SEGMENTS = "pending_segments";
+
   /** Name of the generation reference file name */
-  public static final String SEGMENTS_GEN = "segments." +  GEN_EXTENSION;
+  public static final String OLD_SEGMENTS_GEN = "segments.gen";
 
   /** Extension of compound file */
   public static final String COMPOUND_FILE_EXTENSION = "cfs";
   
   /** Extension of compound file entries */
   public static final String COMPOUND_FILE_ENTRIES_EXTENSION = "cfe";
-
-  /**
-   * This array contains all filename extensions used by
-   * Lucene's index files, with one exception, namely the
-   * extension made up from  <code>.s</code> + a number.
-   * Also note that Lucene's <code>segments_N</code> files
-   * do not have any filename extension.
-   */
-  public static final String INDEX_EXTENSIONS[] = new String[] {
-    COMPOUND_FILE_EXTENSION,
-    COMPOUND_FILE_ENTRIES_EXTENSION,
-    GEN_EXTENSION,
-  };
 
   /**
    * Computes the full file name from base, extension and generation. If the
@@ -172,6 +159,23 @@ public final class IndexFileNames {
     }
     return filename;
   }
+
+  /** Returns the generation from this file name, or 0 if there is no
+   *  generation. */
+  public static long parseGeneration(String filename) {
+    assert filename.startsWith("_");
+    String parts[] = stripExtension(filename).substring(1).split("_");
+    // 4 cases: 
+    // segment.ext
+    // segment_gen.ext
+    // segment_codec_suffix.ext
+    // segment_gen_codec_suffix.ext
+    if (parts.length == 2 || parts.length == 4) {
+      return Long.parseLong(parts[1], Character.MAX_RADIX);
+    } else {
+      return 0;
+    }
+  }
   
   /**
    * Parses the segment name out of the given file name.
@@ -198,6 +202,19 @@ public final class IndexFileNames {
     }
     return filename;
   }  
+
+  /**
+   * Return the extension (anything after the first '.'),
+   * or null if there is no '.' in the file name.
+   */
+  public static String getExtension(String filename) {
+    final int idx = filename.indexOf('.');
+    if (idx == -1) {
+      return null;
+    } else {
+      return filename.substring(idx + 1, filename.length());
+    }
+  }
 
   /**
    * All files created by codecs much match this pattern (checked in

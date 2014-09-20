@@ -29,10 +29,10 @@ import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.FieldInfo.DocValuesType;
 import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.util.IOUtils;
 
 /**
  * Lucene 4.6 FieldInfos reader.
@@ -49,13 +49,10 @@ final class Lucene46FieldInfosReader extends FieldInfosReader {
   @Override
   public FieldInfos read(Directory directory, String segmentName, String segmentSuffix, IOContext context) throws IOException {
     final String fileName = IndexFileNames.segmentFileName(segmentName, segmentSuffix, Lucene46FieldInfosFormat.EXTENSION);
-    IndexInput input = directory.openInput(fileName, context);
-    
-    boolean success = false;
-    try {
-      CodecUtil.checkHeader(input, Lucene46FieldInfosFormat.CODEC_NAME, 
-                                   Lucene46FieldInfosFormat.FORMAT_START, 
-                                   Lucene46FieldInfosFormat.FORMAT_CURRENT);
+    try (ChecksumIndexInput input = directory.openChecksumInput(fileName, context)) {
+      int codecVersion = CodecUtil.checkHeader(input, Lucene46FieldInfosFormat.CODEC_NAME, 
+                                                      Lucene46FieldInfosFormat.FORMAT_START, 
+                                                      Lucene46FieldInfosFormat.FORMAT_CURRENT);
 
       final int size = input.readVInt(); //read in the size
       FieldInfo infos[] = new FieldInfo[size];
@@ -63,6 +60,9 @@ final class Lucene46FieldInfosReader extends FieldInfosReader {
       for (int i = 0; i < size; i++) {
         String name = input.readString();
         final int fieldNumber = input.readVInt();
+        if (fieldNumber < 0) {
+          throw new CorruptIndexException("invalid field number for field: " + name + ", fieldNumber=" + fieldNumber, input);
+        }
         byte bits = input.readByte();
         boolean isIndexed = (bits & Lucene46FieldInfosFormat.IS_INDEXED) != 0;
         boolean storeTermVector = (bits & Lucene46FieldInfosFormat.STORE_TERMVECTOR) != 0;
@@ -88,22 +88,15 @@ final class Lucene46FieldInfosReader extends FieldInfosReader {
         final long dvGen = input.readLong();
         final Map<String,String> attributes = input.readStringStringMap();
         infos[i] = new FieldInfo(name, isIndexed, fieldNumber, storeTermVector, 
-          omitNorms, storePayloads, indexOptions, docValuesType, normsType, Collections.unmodifiableMap(attributes));
-        infos[i].setDocValuesGen(dvGen);
+          omitNorms, storePayloads, indexOptions, docValuesType, normsType, dvGen, Collections.unmodifiableMap(attributes));
       }
-
-      if (input.getFilePointer() != input.length()) {
-        throw new CorruptIndexException("did not read all bytes from file \"" + fileName + "\": read " + input.getFilePointer() + " vs size " + input.length() + " (resource: " + input + ")");
-      }
-      FieldInfos fieldInfos = new FieldInfos(infos);
-      success = true;
-      return fieldInfos;
-    } finally {
-      if (success) {
-        input.close();
+      
+      if (codecVersion >= Lucene46FieldInfosFormat.FORMAT_CHECKSUM) {
+        CodecUtil.checkFooter(input);
       } else {
-        IOUtils.closeWhileHandlingException(input);
+        CodecUtil.checkEOF(input);
       }
+      return new FieldInfos(infos);
     }
   }
   
@@ -118,8 +111,10 @@ final class Lucene46FieldInfosReader extends FieldInfosReader {
       return DocValuesType.SORTED;
     } else if (b == 4) {
       return DocValuesType.SORTED_SET;
+    } else if (b == 5) {
+      return DocValuesType.SORTED_NUMERIC;
     } else {
-      throw new CorruptIndexException("invalid docvalues byte: " + b + " (resource=" + input + ")");
+      throw new CorruptIndexException("invalid docvalues byte: " + b, input);
     }
   }
 }

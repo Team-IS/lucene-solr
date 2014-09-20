@@ -17,17 +17,9 @@
 
 package org.apache.solr.handler.component;
 
-import static org.apache.solr.common.params.CommonParams.FQ;
-
+import org.apache.lucene.search.Query;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.params.CommonParams;
-
-import java.io.IOException;
-import java.net.URL;
-import java.util.*;
-import java.util.concurrent.atomic.AtomicLong;
-
-import org.apache.lucene.search.Query;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
@@ -35,6 +27,21 @@ import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.search.DocList;
 import org.apache.solr.search.QueryParsing;
 import org.apache.solr.util.SolrPluginUtils;
+
+import java.io.IOException;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static org.apache.solr.common.params.CommonParams.FQ;
 
 /**
  * Adds debugging information to a request.
@@ -88,7 +95,7 @@ public class DebugComponent extends SearchComponent
       }
 
       NamedList stdinfo = SolrPluginUtils.doStandardDebug( rb.req,
-          rb.getQueryString(), rb.getQuery(), results, rb.isDebugQuery(), rb.isDebugResults());
+          rb.getQueryString(), rb.wrap(rb.getQuery()), results, rb.isDebugQuery(), rb.isDebugResults());
       
       NamedList info = rb.getDebugInfo();
       if( info == null ) {
@@ -148,20 +155,21 @@ public class DebugComponent extends SearchComponent
       sreq.purpose |= ShardRequest.PURPOSE_GET_DEBUG;
       if (rb.isDebugAll()) {
         sreq.params.set(CommonParams.DEBUG_QUERY, "true");
-      } else if (rb.isDebug()) {
+      } else {
         if (rb.isDebugQuery()){
           sreq.params.add(CommonParams.DEBUG, CommonParams.QUERY);
-        } 
-        if (rb.isDebugTimings()){
-          sreq.params.add(CommonParams.DEBUG, CommonParams.TIMING);
-        } 
+        }
         if (rb.isDebugResults()){
           sreq.params.add(CommonParams.DEBUG, CommonParams.RESULTS);
         }
       }
     } else {
       sreq.params.set(CommonParams.DEBUG_QUERY, "false");
+      sreq.params.set(CommonParams.DEBUG, "false");
     }
+    if (rb.isDebugTimings()) {
+      sreq.params.add(CommonParams.DEBUG, CommonParams.TIMING);
+    } 
     if (rb.isDebugTrack()) {
       sreq.params.add(CommonParams.DEBUG, CommonParams.TRACK);
       sreq.params.set(CommonParams.REQUEST_ID, rb.req.getParams().get(CommonParams.REQUEST_ID));
@@ -175,7 +183,7 @@ public class DebugComponent extends SearchComponent
       @SuppressWarnings("unchecked")
       NamedList<Object> stageList = (NamedList<Object>) ((NamedList<Object>)rb.getDebugInfo().get("track")).get(stages.get(rb.stage));
       if(stageList == null) {
-        stageList = new NamedList<>();
+        stageList = new SimpleOrderedMap<>();
         rb.addDebug(stageList, "track", stages.get(rb.stage));
       }
       for(ShardResponse response: sreq.responses) {
@@ -184,44 +192,54 @@ public class DebugComponent extends SearchComponent
     }
   }
 
-  private Set<String> excludeSet = new HashSet<>(Arrays.asList("explain"));
+  private final static Set<String> EXCLUDE_SET = Collections.unmodifiableSet(new HashSet<>(Arrays.asList("explain")));
 
   @Override
   public void finishStage(ResponseBuilder rb) {
     if (rb.isDebug() && rb.stage == ResponseBuilder.STAGE_GET_FIELDS) {
       NamedList<Object> info = rb.getDebugInfo();
-      NamedList explain = new SimpleOrderedMap();
+      NamedList<Object> explain = new SimpleOrderedMap<>();
 
       Map.Entry<String, Object>[]  arr =  new NamedList.NamedListEntry[rb.resultIds.size()];
+      // Will be set to true if there is at least one response with PURPOSE_GET_DEBUG
+      boolean hasGetDebugResponses = false;
 
       for (ShardRequest sreq : rb.finished) {
-        if ((sreq.purpose & ShardRequest.PURPOSE_GET_DEBUG) == 0) continue;
         for (ShardResponse srsp : sreq.responses) {
+          if (srsp.getException() != null) {
+            // can't expect the debug content if there was an exception for this request
+            // this should only happen when using shards.tolerant=true
+            continue;
+          }
           NamedList sdebug = (NamedList)srsp.getSolrResponse().getResponse().get("debug");
-          info = (NamedList)merge(sdebug, info, excludeSet);
-
-          if (rb.isDebugResults()) {
-            NamedList sexplain = (NamedList)sdebug.get("explain");
-            for (int i = 0; i < sexplain.size(); i++) {
-              String id = sexplain.getName(i);
-              // TODO: lookup won't work for non-string ids... String vs Float
-              ShardDoc sdoc = rb.resultIds.get(id);
-              int idx = sdoc.positionInResponse;
-              arr[idx] = new NamedList.NamedListEntry<>(id, sexplain.getVal(i));
+          info = (NamedList)merge(sdebug, info, EXCLUDE_SET);
+          if ((sreq.purpose & ShardRequest.PURPOSE_GET_DEBUG) != 0) {
+            hasGetDebugResponses = true;
+            if (rb.isDebugResults()) {
+              NamedList sexplain = (NamedList)sdebug.get("explain");
+              for (int i = 0; i < sexplain.size(); i++) {
+                String id = sexplain.getName(i);
+                // TODO: lookup won't work for non-string ids... String vs Float
+                ShardDoc sdoc = rb.resultIds.get(id);
+                int idx = sdoc.positionInResponse;
+                arr[idx] = new NamedList.NamedListEntry<>(id, sexplain.getVal(i));
+              }
             }
           }
         }
       }
 
       if (rb.isDebugResults()) {
-        explain = SolrPluginUtils.removeNulls(new SimpleOrderedMap<>(arr));
+         explain = SolrPluginUtils.removeNulls(arr, new SimpleOrderedMap<>());
       }
 
-      if (info == null) {
+      if (!hasGetDebugResponses) {
+        if (info == null) {
+          info = new SimpleOrderedMap<>();
+        }
         // No responses were received from shards. Show local query info.
-        info = new SimpleOrderedMap<>();
         SolrPluginUtils.doStandardQueryDebug(
-                rb.req, rb.getQueryString(),  rb.getQuery(), rb.isDebugQuery(), info);
+                rb.req, rb.getQueryString(),  rb.wrap(rb.getQuery()), rb.isDebugQuery(), info);
         if (rb.isDebugQuery() && rb.getQparser() != null) {
           rb.getQparser().addDebugInfo(info);
         }
@@ -236,14 +254,18 @@ public class DebugComponent extends SearchComponent
       }
 
       rb.setDebugInfo(info);
-      rb.rsp.add("debug", rb.getDebugInfo() );      
+      rb.rsp.add("debug", rb.getDebugInfo() );
     }
     
   }
 
 
   private NamedList<String> getTrackResponse(ShardResponse shardResponse) {
-    NamedList<String> namedList = new NamedList<>();
+    NamedList<String> namedList = new SimpleOrderedMap<>();
+    if (shardResponse.getException() != null) {
+      namedList.add("Exception", shardResponse.getException().getMessage());
+      return namedList;
+    }
     NamedList<Object> responseNL = shardResponse.getSolrResponse().getResponse();
     @SuppressWarnings("unchecked")
     NamedList<Object> responseHeader = (NamedList<Object>)responseNL.get("responseHeader");
@@ -344,11 +366,6 @@ public class DebugComponent extends SearchComponent
   @Override
   public String getDescription() {
     return "Debug Information";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
   }
 
   @Override

@@ -204,7 +204,7 @@ public class TestSearcherManager extends ThreadedIndexingAndSearchingTestCase {
     Directory dir = newDirectory();
     // Test can deadlock if we use SMS:
     IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergeScheduler(new ConcurrentMergeScheduler()));
+        new MockAnalyzer(random())).setMergeScheduler(new ConcurrentMergeScheduler()));
     writer.addDocument(new Document());
     writer.commit();
     final CountDownLatch awaitEnterWarm = new CountDownLatch(1);
@@ -296,7 +296,7 @@ public class TestSearcherManager extends ThreadedIndexingAndSearchingTestCase {
   public void testCloseTwice() throws Exception {
     // test that we can close SM twice (per Closeable's contract).
     Directory dir = newDirectory();
-    new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, null)).close();
+    new IndexWriter(dir, new IndexWriterConfig(null)).close();
     SearcherManager sm = new SearcherManager(dir, null);
     sm.close();
     sm.close();
@@ -306,7 +306,7 @@ public class TestSearcherManager extends ThreadedIndexingAndSearchingTestCase {
   public void testReferenceDecrementIllegally() throws Exception {
     Directory dir = newDirectory();
     IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergeScheduler(new ConcurrentMergeScheduler()));
+        new MockAnalyzer(random())).setMergeScheduler(new ConcurrentMergeScheduler()));
     SearcherManager sm = new SearcherManager(writer, false, new SearcherFactory());
     writer.addDocument(new Document());
     writer.commit();
@@ -336,7 +336,7 @@ public class TestSearcherManager extends ThreadedIndexingAndSearchingTestCase {
 
   public void testEnsureOpen() throws Exception {
     Directory dir = newDirectory();
-    new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, null)).close();
+    new IndexWriter(dir, new IndexWriterConfig(null)).close();
     SearcherManager sm = new SearcherManager(dir, null);
     IndexSearcher s = sm.acquire();
     sm.close();
@@ -362,7 +362,7 @@ public class TestSearcherManager extends ThreadedIndexingAndSearchingTestCase {
 
   public void testListenerCalled() throws Exception {
     Directory dir = newDirectory();
-    IndexWriter iw = new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, null));
+    IndexWriter iw = new IndexWriter(dir, new IndexWriterConfig(null));
     final AtomicBoolean afterRefreshCalled = new AtomicBoolean(false);
     SearcherManager sm = new SearcherManager(iw, false, new SearcherFactory());
     sm.addListener(new ReferenceManager.RefreshListener() {

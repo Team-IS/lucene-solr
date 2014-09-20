@@ -55,8 +55,8 @@ public class SimpleSortedSetFacetsExample {
 
   /** Build the example index. */
   private void index() throws IOException {
-    IndexWriter indexWriter = new IndexWriter(indexDir, new IndexWriterConfig(FacetExamples.EXAMPLES_VER, 
-        new WhitespaceAnalyzer(FacetExamples.EXAMPLES_VER)));
+    IndexWriter indexWriter = new IndexWriter(indexDir, new IndexWriterConfig(
+        new WhitespaceAnalyzer()));
     Document doc = new Document();
     doc.add(new SortedSetDocValuesFacetField("Author", "Bob"));
     doc.add(new SortedSetDocValuesFacetField("Publish Year", "2010"));

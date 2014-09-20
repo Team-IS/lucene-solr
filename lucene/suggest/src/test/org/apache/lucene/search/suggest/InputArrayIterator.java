@@ -19,8 +19,10 @@ package org.apache.lucene.search.suggest;
 
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.Set;
 
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 
 /**
  * A {@link InputIterator} over a sequence of {@link Input}s.
@@ -28,9 +30,10 @@ import org.apache.lucene.util.BytesRef;
 public final class InputArrayIterator implements InputIterator {
   private final Iterator<Input> i;
   private final boolean hasPayloads;
+  private final boolean hasContexts;
   private boolean first;
   private Input current;
-  private final BytesRef spare = new BytesRef();
+  private final BytesRefBuilder spare = new BytesRefBuilder();
 
   public InputArrayIterator(Iterator<Input> i) {
     this.i = i;
@@ -38,8 +41,10 @@ public final class InputArrayIterator implements InputIterator {
       current = i.next();
       first = true;
       this.hasPayloads = current.hasPayloads;
+      this.hasContexts = current.hasContexts;
     } else {
       this.hasPayloads = false;
+      this.hasContexts = false;
     }
   }
 
@@ -64,7 +69,7 @@ public final class InputArrayIterator implements InputIterator {
         current = i.next();
       }
       spare.copyBytes(current.term);
-      return spare;
+      return spare.get();
     }
     return null;
   }
@@ -77,5 +82,15 @@ public final class InputArrayIterator implements InputIterator {
   @Override
   public boolean hasPayloads() {
     return hasPayloads;
+  }
+
+  @Override
+  public Set<BytesRef> contexts() {
+    return current.contexts;
+  }
+
+  @Override
+  public boolean hasContexts() {
+    return hasContexts;
   }
 }

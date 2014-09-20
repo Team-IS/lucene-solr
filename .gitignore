@@ -5,11 +5,14 @@
 /idea-build
 **/dist
 **/lib
+**/test-lib
 /*~
 /velocity.log
 /build.properties
 /.idea
-**/*.iml
+lucene/**/*.iml
+solr/**/*.iml
+parent.iml
 **/*.ipr
 **/*.iws
 /.project

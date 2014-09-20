@@ -26,10 +26,9 @@ import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.IndexFileNames;
+import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
-import org.apache.lucene.store.IndexOutput;
-import org.apache.lucene.util.IOUtils;
 
 /**
  * Lucene 4.6 FieldInfos writer.
@@ -46,9 +45,7 @@ final class Lucene46FieldInfosWriter extends FieldInfosWriter {
   @Override
   public void write(Directory directory, String segmentName, String segmentSuffix, FieldInfos infos, IOContext context) throws IOException {
     final String fileName = IndexFileNames.segmentFileName(segmentName, segmentSuffix, Lucene46FieldInfosFormat.EXTENSION);
-    IndexOutput output = directory.createOutput(fileName, context);
-    boolean success = false;
-    try {
+    try (IndexOutput output = directory.createOutput(fileName, context)) {
       CodecUtil.writeHeader(output, Lucene46FieldInfosFormat.CODEC_NAME, Lucene46FieldInfosFormat.FORMAT_CURRENT);
       output.writeVInt(infos.size());
       for (FieldInfo fi : infos) {
@@ -81,13 +78,7 @@ final class Lucene46FieldInfosWriter extends FieldInfosWriter {
         output.writeLong(fi.getDocValuesGen());
         output.writeStringStringMap(fi.attributes());
       }
-      success = true;
-    } finally {
-      if (success) {
-        output.close();
-      } else {
-        IOUtils.closeWhileHandlingException(output);
-      }
+      CodecUtil.writeFooter(output);
     }
   }
   
@@ -102,6 +93,8 @@ final class Lucene46FieldInfosWriter extends FieldInfosWriter {
       return 3;
     } else if (type == DocValuesType.SORTED_SET) {
       return 4;
+    } else if (type == DocValuesType.SORTED_NUMERIC) {
+      return 5;
     } else {
       throw new AssertionError();
     }

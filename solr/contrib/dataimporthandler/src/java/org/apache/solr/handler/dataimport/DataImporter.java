@@ -127,7 +127,7 @@ public class DataImporter {
           LOG.info("Loading DIH Configuration: " + dataconfigFile);
         }
         if(is!=null) {          
-          loadDataConfig(is);
+          config = loadDataConfig(is);
           success = true;
         }      
         
@@ -174,16 +174,21 @@ public class DataImporter {
   public IndexSchema getSchema() {
     return schema;
   }
-  
+
   /**
    * Used by tests
    */
-  void loadAndInit(String configStr) {
-    loadDataConfig(new InputSource(new StringReader(configStr)));       
-  }  
+  public void loadAndInit(String configStr) {
+    config = loadDataConfig(new InputSource(new StringReader(configStr)));
+  }
 
-  private void loadDataConfig(InputSource configFile) {
+  public void loadAndInit(InputSource configFile) {
+    config = loadDataConfig(configFile);
+  }
 
+  public DIHConfiguration loadDataConfig(InputSource configFile) {
+
+    DIHConfiguration dihcfg = null;
     try {
       DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
       
@@ -209,18 +214,19 @@ public class DataImporter {
         IOUtils.closeQuietly(configFile.getByteStream());
       }
 
-      config = readFromXml(document);
+      dihcfg = readFromXml(document);
       LOG.info("Data Configuration loaded successfully");
     } catch (Exception e) {
       throw new DataImportHandlerException(SEVERE,
               "Data Config problem: " + e.getMessage(), e);
     }
-    for (Entity e : config.getEntities()) {
+    for (Entity e : dihcfg.getEntities()) {
       if (e.getAllAttributes().containsKey(SqlEntityProcessor.DELTA_QUERY)) {
         isDeltaImportSupported = true;
         break;
       }
     }
+    return dihcfg;
   }
   
   public DIHConfiguration readFromXml(Document xmlDocument) {
@@ -327,7 +333,7 @@ public class DataImporter {
     return propWriter;
   }
 
-  DIHConfiguration getConfig() {
+  public DIHConfiguration getConfig() {
     return config;
   }
 
@@ -347,7 +353,7 @@ public class DataImporter {
     return store.get(key);
   }
 
-  DataSource getDataSourceInstance(Entity key, String name, Context ctx) {
+  public DataSource getDataSourceInstance(Entity key, String name, Context ctx) {
     Map<String,String> p = requestLevelDataSourceProps.get(name);
     if (p == null)
       p = config.getDataSources().get(name);
@@ -399,10 +405,9 @@ public class DataImporter {
     return importLock.isLocked();
   }
 
-  public void doFullImport(SolrWriter writer, RequestInfo requestParams) {
+  public void doFullImport(DIHWriter writer, RequestInfo requestParams) {
     LOG.info("Starting Full Import");
     setStatus(Status.RUNNING_FULL_DUMP);
-    boolean success = false;
     try {
       DIHProperties dihPropWriter = createPropertyWriter();
       setIndexStartTime(dihPropWriter.getCurrentTimestamp());
@@ -411,31 +416,26 @@ public class DataImporter {
       docBuilder.execute();
       if (!requestParams.isDebug())
         cumulativeStatistics.add(docBuilder.importStatistics);
-      success = true;
     } catch (Exception e) {
       SolrException.log(LOG, "Full Import failed", e);
+      docBuilder.handleError("Full Import failed", e);
     } finally {
-      if (!success) {
-        docBuilder.rollback();
-      }
-      
       setStatus(Status.IDLE);
       DocBuilder.INSTANCE.set(null);
     }
 
   }
 
-  private void checkWritablePersistFile(SolrWriter writer, DIHProperties dihPropWriter) {
+  private void checkWritablePersistFile(DIHWriter writer, DIHProperties dihPropWriter) {
    if (isDeltaImportSupported && !dihPropWriter.isWritable()) {
       throw new DataImportHandlerException(SEVERE,
           "Properties is not writable. Delta imports are supported by data config but will not work.");
     }
   }
 
-  public void doDeltaImport(SolrWriter writer, RequestInfo requestParams) {
+  public void doDeltaImport(DIHWriter writer, RequestInfo requestParams) {
     LOG.info("Starting Delta Import");
     setStatus(Status.RUNNING_DELTA_DUMP);
-    boolean success = false;
     try {
       DIHProperties dihPropWriter = createPropertyWriter();
       setIndexStartTime(dihPropWriter.getCurrentTimestamp());
@@ -444,20 +444,17 @@ public class DataImporter {
       docBuilder.execute();
       if (!requestParams.isDebug())
         cumulativeStatistics.add(docBuilder.importStatistics);
-      success = true;
     } catch (Exception e) {
       LOG.error("Delta Import Failed", e);
+      docBuilder.handleError("Delta Import Failed", e);
     } finally {
-      if (!success) {
-        docBuilder.rollback();
-      }
       setStatus(Status.IDLE);
       DocBuilder.INSTANCE.set(null);
     }
 
   }
 
-  public void runAsync(final RequestInfo reqParams, final SolrWriter sw) {
+  public void runAsync(final RequestInfo reqParams, final DIHWriter sw) {
     new Thread() {
       @Override
       public void run() {
@@ -466,7 +463,7 @@ public class DataImporter {
     }.start();
   }
 
-  void runCmd(RequestInfo reqParams, SolrWriter sw) {
+  void runCmd(RequestInfo reqParams, DIHWriter sw) {
     String command = reqParams.getCommand();
     if (command.equals(ABORT_CMD)) {
       if (docBuilder != null) {
@@ -508,10 +505,15 @@ public class DataImporter {
 
   }
 
-  DocBuilder getDocBuilder() {
+  public DocBuilder getDocBuilder() {
     return docBuilder;
   }
-  
+
+  public DocBuilder getDocBuilder(DIHWriter writer, RequestInfo requestParams) {
+    DIHProperties dihPropWriter = createPropertyWriter();
+    return new DocBuilder(this, writer, dihPropWriter, requestParams);
+  }
+
   Map<String, Evaluator> getEvaluators() {
     return getEvaluators(config.getFunctions());
   }

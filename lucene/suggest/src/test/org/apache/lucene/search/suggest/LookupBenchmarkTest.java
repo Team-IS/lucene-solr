@@ -22,6 +22,7 @@ import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
 import java.net.URL;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -92,7 +93,7 @@ public class LookupBenchmarkTest extends LuceneTestCase {
     LookupBenchmarkTest.benchmarkInput = input;
   }
 
-  static final Charset UTF_8 = Charset.forName("UTF-8");
+  static final Charset UTF_8 = StandardCharsets.UTF_8;
 
   /**
    * Collect the multilingual input for benchmarks/ tests.
@@ -144,7 +145,7 @@ public class LookupBenchmarkTest extends LuceneTestCase {
     System.err.println("-- RAM consumption");
     for (Class<? extends Lookup> cls : benchmarkClasses) {
       Lookup lookup = buildLookup(cls, dictionaryInput);
-      long sizeInBytes = lookup.sizeInBytes();
+      long sizeInBytes = lookup.ramBytesUsed();
       System.err.println(
           String.format(Locale.ROOT, "%-15s size[B]:%,13d",
               lookup.getClass().getSimpleName(), 
@@ -162,7 +163,7 @@ public class LookupBenchmarkTest extends LuceneTestCase {
     } catch (InstantiationException e) {
       Analyzer a = new MockAnalyzer(random, MockTokenizer.KEYWORD, false);
       if (cls == AnalyzingInfixSuggester.class) {
-        lookup = new AnalyzingInfixSuggester(TEST_VERSION_CURRENT, FSDirectory.open(TestUtil.getTempDir("LookupBenchmarkTest")), a);
+        lookup = new AnalyzingInfixSuggester(FSDirectory.open(createTempDir("LookupBenchmarkTest")), a);
       } else {
         Constructor<? extends Lookup> ctor = cls.getConstructor(Analyzer.class);
         lookup = ctor.newInstance(a);

@@ -26,12 +26,12 @@ import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.core.KeywordTokenizer;
 import org.apache.lucene.util.TestUtil;
-import org.apache.lucene.util.TestUtil;
+import org.junit.Test;
 
 public class TestCodepointCountFilter extends BaseTokenStreamTestCase {
   public void testFilterWithPosIncr() throws Exception {
     TokenStream stream = whitespaceMockTokenizer("short toolong evenmuchlongertext a ab toolong foo");
-    CodepointCountFilter filter = new CodepointCountFilter(TEST_VERSION_CURRENT, stream, 2, 6);
+    CodepointCountFilter filter = new CodepointCountFilter(stream, 2, 6);
     assertTokenStreamContents(filter,
       new String[]{"short", "ab", "foo"},
       new int[]{1, 4, 2}
@@ -43,7 +43,7 @@ public class TestCodepointCountFilter extends BaseTokenStreamTestCase {
       @Override
       protected TokenStreamComponents createComponents(String fieldName) {
         Tokenizer tokenizer = new KeywordTokenizer();
-        return new TokenStreamComponents(tokenizer, new CodepointCountFilter(TEST_VERSION_CURRENT, tokenizer, 0, 5));
+        return new TokenStreamComponents(tokenizer, new CodepointCountFilter(tokenizer, 0, 5));
       }
     };
     checkOneTerm(a, "", "");
@@ -55,14 +55,27 @@ public class TestCodepointCountFilter extends BaseTokenStreamTestCase {
       int min = TestUtil.nextInt(random(), 0, 100);
       int max = TestUtil.nextInt(random(), 0, 100);
       int count = text.codePointCount(0, text.length());
+      if(min>max){
+        int temp = min;
+        min = max;
+        max = temp;
+      }
       boolean expected = count >= min && count <= max;
       TokenStream stream = new KeywordTokenizer();
       ((Tokenizer)stream).setReader(new StringReader(text));
-      stream = new CodepointCountFilter(TEST_VERSION_CURRENT, stream, min, max);
+      stream = new CodepointCountFilter(stream, min, max);
       stream.reset();
       assertEquals(expected, stream.incrementToken());
       stream.end();
       stream.close();
     }
+  }
+
+  /**
+   * checking the validity of constructor arguments
+   */
+  @Test(expected = IllegalArgumentException.class)
+  public void testIllegalArguments() throws Exception {
+    new CodepointCountFilter(whitespaceMockTokenizer("accept only valid arguments"), 4, 1);
   }
 }

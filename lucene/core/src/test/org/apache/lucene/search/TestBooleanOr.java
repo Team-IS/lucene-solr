@@ -21,7 +21,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
@@ -161,7 +160,7 @@ public class TestBooleanOr extends LuceneTestCase {
 
   public void testBooleanScorerMax() throws IOException {
     Directory dir = newDirectory();
-    RandomIndexWriter riw = new RandomIndexWriter(random(), dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    RandomIndexWriter riw = new RandomIndexWriter(random(), dir, newIndexWriterConfig(new MockAnalyzer(random())));
 
     int docCount = atLeast(10000);
 
@@ -187,19 +186,12 @@ public class TestBooleanOr extends LuceneTestCase {
 
     final FixedBitSet hits = new FixedBitSet(docCount);
     final AtomicInteger end = new AtomicInteger();
-    Collector c = new Collector() {
-        @Override
-        public void setNextReader(AtomicReaderContext sub) {
-        }
+    LeafCollector c = new SimpleCollector() {
 
         @Override
         public void collect(int doc) {
           assertTrue("collected doc=" + doc + " beyond max=" + end, doc < end.intValue());
           hits.set(doc);
-        }
-
-        @Override
-        public void setScorer(Scorer scorer) {
         }
 
         @Override

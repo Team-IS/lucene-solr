@@ -33,7 +33,10 @@ import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Just like {@link Lucene41PostingsFormat} but with additional asserts.
@@ -60,6 +63,10 @@ public final class AssertingPostingsFormat extends PostingsFormat {
     
     AssertingFieldsProducer(FieldsProducer in) {
       this.in = in;
+      // do a few simple checks on init
+      assert toString() != null;
+      assert ramBytesUsed() >= 0;
+      assert getChildResources() != null;
     }
     
     @Override
@@ -87,7 +94,26 @@ public final class AssertingPostingsFormat extends PostingsFormat {
 
     @Override
     public long ramBytesUsed() {
-      return in.ramBytesUsed();
+      long v = in.ramBytesUsed();
+      assert v >= 0;
+      return v;
+    }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      Iterable<? extends Accountable> res = in.getChildResources();
+      TestUtil.checkIterator(res.iterator());
+      return res;
+    }
+
+    @Override
+    public void checkIntegrity() throws IOException {
+      in.checkIntegrity();
+    }
+    
+    @Override
+    public String toString() {
+      return getClass().getSimpleName() + "(" + in.toString() + ")";
     }
   }
 
@@ -126,7 +152,7 @@ public final class AssertingPostingsFormat extends PostingsFormat {
         assert terms != null;
 
         termsEnum = terms.iterator(termsEnum);
-        BytesRef lastTerm = null;
+        BytesRefBuilder lastTerm = null;
         DocsEnum docsEnum = null;
         DocsAndPositionsEnum posEnum = null;
 
@@ -143,9 +169,10 @@ public final class AssertingPostingsFormat extends PostingsFormat {
           if (term == null) {
             break;
           }
-          assert lastTerm == null || lastTerm.compareTo(term) < 0;
+          assert lastTerm == null || lastTerm.get().compareTo(term) < 0;
           if (lastTerm == null) {
-            lastTerm = BytesRef.deepCopyOf(term);
+            lastTerm = new BytesRefBuilder();
+            lastTerm.append(term);
           } else {
             lastTerm.copyBytes(term);
           }
@@ -203,6 +230,11 @@ public final class AssertingPostingsFormat extends PostingsFormat {
           }
         }
       }
+    }
+
+    @Override
+    public void close() throws IOException {
+      in.close();
     }
   }
 }

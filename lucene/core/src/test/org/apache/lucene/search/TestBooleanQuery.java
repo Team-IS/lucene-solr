@@ -298,7 +298,7 @@ public class TestBooleanQuery extends LuceneTestCase {
     Directory directory = newDirectory();
     Analyzer indexerAnalyzer = new MockAnalyzer(random());
 
-    IndexWriterConfig config = new IndexWriterConfig(TEST_VERSION_CURRENT, indexerAnalyzer);
+    IndexWriterConfig config = new IndexWriterConfig(indexerAnalyzer);
     IndexWriter writer = new IndexWriter(directory, config);
     String FIELD = "content";
     Document d = new Document();
@@ -348,6 +348,44 @@ public class TestBooleanQuery extends LuceneTestCase {
     bq.add(new TermQuery(new Term("field", "here")), BooleanClause.Occur.SHOULD);
     bq.setMinimumNumberShouldMatch(2);
     s.search(bq, 10);
+    r.close();
+    dir.close();
+  }
+
+  public void testOneClauseRewriteOptimization() throws Exception {
+    final float BOOST = 3.5F;
+    final String FIELD = "content";
+    final String VALUE = "foo";
+      
+    Directory dir = newDirectory();
+    (new RandomIndexWriter(random(), dir)).close();
+    IndexReader r = DirectoryReader.open(dir);
+
+    TermQuery expected = new TermQuery(new Term(FIELD, VALUE));
+    expected.setBoost(BOOST);
+
+    final int numLayers = atLeast(3);
+    boolean needBoost = true;
+    Query actual = new TermQuery(new Term(FIELD, VALUE));
+
+    for (int i = 0; i < numLayers; i++) {
+      if (needBoost && 0 == TestUtil.nextInt(random(),0,numLayers)) {
+        needBoost = false;
+        actual.setBoost(BOOST);
+      }
+
+      BooleanQuery bq = new BooleanQuery();
+      bq.add(actual, random().nextBoolean() 
+             ? BooleanClause.Occur.SHOULD : BooleanClause.Occur.MUST);
+      actual = bq;
+    }
+    if (needBoost) {
+      actual.setBoost(BOOST);
+    }
+
+    assertEquals(numLayers + ": " + actual.toString(),
+                 expected, actual.rewrite(r));
+
     r.close();
     dir.close();
   }

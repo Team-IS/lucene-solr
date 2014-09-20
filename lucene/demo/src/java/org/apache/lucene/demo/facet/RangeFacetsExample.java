@@ -60,8 +60,8 @@ public class RangeFacetsExample implements Closeable {
   
   /** Build the example index. */
   public void index() throws IOException {
-    IndexWriter indexWriter = new IndexWriter(indexDir, new IndexWriterConfig(FacetExamples.EXAMPLES_VER, 
-        new WhitespaceAnalyzer(FacetExamples.EXAMPLES_VER)));
+    IndexWriter indexWriter = new IndexWriter(indexDir, new IndexWriterConfig(
+        new WhitespaceAnalyzer()));
 
     // Add documents with a fake timestamp, 1000 sec before
     // "now", 2000 sec before "now", ...:

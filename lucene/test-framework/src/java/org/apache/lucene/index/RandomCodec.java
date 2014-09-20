@@ -32,26 +32,18 @@ import org.apache.lucene.codecs.PostingsFormat;
 import org.apache.lucene.codecs.asserting.AssertingDocValuesFormat;
 import org.apache.lucene.codecs.asserting.AssertingPostingsFormat;
 import org.apache.lucene.codecs.bloom.TestBloomFilteredLucene41Postings;
-import org.apache.lucene.codecs.diskdv.DiskDocValuesFormat;
 import org.apache.lucene.codecs.lucene41.Lucene41PostingsFormat;
 import org.apache.lucene.codecs.lucene41ords.Lucene41WithOrds;
 import org.apache.lucene.codecs.lucene41vargap.Lucene41VarGapDocFreqInterval;
 import org.apache.lucene.codecs.lucene41vargap.Lucene41VarGapFixedInterval;
-import org.apache.lucene.codecs.lucene45.Lucene45DocValuesFormat;
-import org.apache.lucene.codecs.lucene46.Lucene46Codec;
+import org.apache.lucene.codecs.lucene410.Lucene410Codec;
+import org.apache.lucene.codecs.lucene410.Lucene410DocValuesFormat;
 import org.apache.lucene.codecs.memory.DirectPostingsFormat;
 import org.apache.lucene.codecs.memory.FSTOrdPostingsFormat;
-import org.apache.lucene.codecs.memory.FSTOrdPulsing41PostingsFormat;
 import org.apache.lucene.codecs.memory.FSTPostingsFormat;
-import org.apache.lucene.codecs.memory.FSTPulsing41PostingsFormat;
 import org.apache.lucene.codecs.memory.MemoryDocValuesFormat;
 import org.apache.lucene.codecs.memory.MemoryPostingsFormat;
-import org.apache.lucene.codecs.mockintblock.MockFixedIntBlockPostingsFormat;
-import org.apache.lucene.codecs.mockintblock.MockVariableIntBlockPostingsFormat;
 import org.apache.lucene.codecs.mockrandom.MockRandomPostingsFormat;
-import org.apache.lucene.codecs.mocksep.MockSepPostingsFormat;
-import org.apache.lucene.codecs.nestedpulsing.NestedPulsingPostingsFormat;
-import org.apache.lucene.codecs.pulsing.Pulsing41PostingsFormat;
 import org.apache.lucene.codecs.simpletext.SimpleTextDocValuesFormat;
 import org.apache.lucene.codecs.simpletext.SimpleTextPostingsFormat;
 import org.apache.lucene.util.LuceneTestCase;
@@ -66,7 +58,7 @@ import org.apache.lucene.util.TestUtil;
  * documents in different orders and the test will still be deterministic
  * and reproducable.
  */
-public class RandomCodec extends Lucene46Codec {
+public class RandomCodec extends Lucene410Codec {
   /** Shuffled list of postings formats to use for new mappings */
   private List<PostingsFormat> formats = new ArrayList<>();
   
@@ -78,6 +70,8 @@ public class RandomCodec extends Lucene46Codec {
   
   /** unique set of docvalues format names this codec knows about */
   public Set<String> dvFormatNames = new HashSet<>();
+
+  public final Set<String> avoidCodecs;
 
   /** memorized field->postingsformat mappings */
   // note: we have to sync this map even though its just for debugging/toString, 
@@ -121,6 +115,7 @@ public class RandomCodec extends Lucene46Codec {
 
   public RandomCodec(Random random, Set<String> avoidCodecs) {
     this.perFieldSeed = random.nextInt();
+    this.avoidCodecs = avoidCodecs;
     // TODO: make it possible to specify min/max iterms per
     // block via CL:
     int minItemsPerBlock = TestUtil.nextInt(random, 2, 100);
@@ -131,22 +126,13 @@ public class RandomCodec extends Lucene46Codec {
         new Lucene41PostingsFormat(minItemsPerBlock, maxItemsPerBlock),
         new FSTPostingsFormat(),
         new FSTOrdPostingsFormat(),
-        new FSTPulsing41PostingsFormat(1 + random.nextInt(20)),
-        new FSTOrdPulsing41PostingsFormat(1 + random.nextInt(20)),
         new DirectPostingsFormat(LuceneTestCase.rarely(random) ? 1 : (LuceneTestCase.rarely(random) ? Integer.MAX_VALUE : maxItemsPerBlock),
                                  LuceneTestCase.rarely(random) ? 1 : (LuceneTestCase.rarely(random) ? Integer.MAX_VALUE : lowFreqCutoff)),
-        new Pulsing41PostingsFormat(1 + random.nextInt(20), minItemsPerBlock, maxItemsPerBlock),
-        // add pulsing again with (usually) different parameters
-        new Pulsing41PostingsFormat(1 + random.nextInt(20), minItemsPerBlock, maxItemsPerBlock),
         //TODO as a PostingsFormat which wraps others, we should allow TestBloomFilteredLucene41Postings to be constructed 
         //with a choice of concrete PostingsFormats. Maybe useful to have a generic means of marking and dealing 
         //with such "wrapper" classes?
         new TestBloomFilteredLucene41Postings(),                
-        new MockSepPostingsFormat(),
-        new MockFixedIntBlockPostingsFormat(TestUtil.nextInt(random, 1, 2000)),
-        new MockVariableIntBlockPostingsFormat( TestUtil.nextInt(random, 1, 127)),
         new MockRandomPostingsFormat(random),
-        new NestedPulsingPostingsFormat(),
         new Lucene41WithOrds(TestUtil.nextInt(random, 1, 1000)),
         new Lucene41VarGapFixedInterval(TestUtil.nextInt(random, 1, 1000)),
         new Lucene41VarGapDocFreqInterval(TestUtil.nextInt(random, 1, 100), TestUtil.nextInt(random, 1, 1000)),
@@ -156,8 +142,7 @@ public class RandomCodec extends Lucene46Codec {
         new MemoryPostingsFormat(false, random.nextFloat()));
     
     addDocValues(avoidCodecs,
-        new Lucene45DocValuesFormat(),
-        new DiskDocValuesFormat(),
+        new Lucene410DocValuesFormat(),
         new MemoryDocValuesFormat(),
         new SimpleTextDocValuesFormat(),
         new AssertingDocValuesFormat());

@@ -55,13 +55,15 @@ abstract public class SolrJettyTestBase extends SolrTestCaseJ4
 
     ignoreException("maxWarmingSearchers");
 
-    // this sets the property for jetty starting SolrDispatchFilter
-    System.setProperty( "solr.data.dir", dataDir.getCanonicalPath() );
-
     context = context==null ? "/solr" : context;
     SolrJettyTestBase.context = context;
     jetty = new JettySolrRunner(solrHome, context, 0, configFile, schemaFile, stopAtShutdown, extraServlets, sslConfig);
 
+    // this sets the property for jetty starting SolrDispatchFilter
+    if (System.getProperty("solr.data.dir") == null && System.getProperty("solr.hdfs.home") == null) {
+      jetty.setDataDir(createTempDir().toFile().getCanonicalPath());
+    }
+    
     jetty.start();
     port = jetty.getLocalPort();
     log.info("Jetty Assigned Port#" + port);
@@ -121,9 +123,6 @@ abstract public class SolrJettyTestBase extends SolrTestCaseJ4
   // Sets up the necessary config files for Jetty. At least some tests require that the solrconfig from the test
   // file directory are used, but some also require that the solr.xml file be explicitly there as of SOLR-4817
   public static void setupJettyTestHome(File solrHome, String collection) throws Exception {
-    if (solrHome.exists()) {
-      FileUtils.deleteDirectory(solrHome);
-    }
     copySolrHomeToTemp(solrHome, collection);
   }
 

@@ -17,31 +17,30 @@
 
 package org.apache.solr.core;
 
-import static org.apache.solr.core.SolrConfig.PluginOpts.*;
 
+import org.apache.lucene.index.IndexDeletionPolicy;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.util.Version;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
-import org.apache.solr.schema.IndexSchemaFactory;
-import org.apache.solr.util.DOMUtil;
-import org.apache.solr.util.FileUtils;
-import org.apache.solr.util.RegexFileFilter;
 import org.apache.solr.handler.component.SearchComponent;
 import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.response.QueryResponseWriter;
 import org.apache.solr.response.transform.TransformerFactory;
 import org.apache.solr.rest.RestManager;
+import org.apache.solr.schema.IndexSchemaFactory;
 import org.apache.solr.search.CacheConfig;
 import org.apache.solr.search.FastLRUCache;
 import org.apache.solr.search.QParserPlugin;
 import org.apache.solr.search.ValueSourceParser;
 import org.apache.solr.servlet.SolrRequestParsers;
+import org.apache.solr.spelling.QueryConverter;
 import org.apache.solr.update.SolrIndexConfig;
 import org.apache.solr.update.UpdateLog;
 import org.apache.solr.update.processor.UpdateRequestProcessorChain;
-import org.apache.solr.spelling.QueryConverter;
-import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.index.IndexDeletionPolicy;
-import org.apache.lucene.util.Version;
+import org.apache.solr.util.DOMUtil;
+import org.apache.solr.util.FileUtils;
+import org.apache.solr.util.RegexFileFilter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.w3c.dom.Node;
@@ -51,13 +50,24 @@ import org.xml.sax.SAXException;
 
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.XPathConstants;
-
 import java.io.File;
-import java.util.*;
-import java.util.regex.Pattern;
-import java.util.regex.Matcher;
 import java.io.FileFilter;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static org.apache.solr.core.SolrConfig.PluginOpts.MULTI_OK;
+import static org.apache.solr.core.SolrConfig.PluginOpts.NOOP;
+import static org.apache.solr.core.SolrConfig.PluginOpts.REQUIRE_CLASS;
+import static org.apache.solr.core.SolrConfig.PluginOpts.REQUIRE_NAME;
 
 
 /**
@@ -71,7 +81,7 @@ public class SolrConfig extends Config {
   
   public static final String DEFAULT_CONF_FILE = "solrconfig.xml";
 
-  static enum PluginOpts { 
+  static enum PluginOpts {
     MULTI_OK, 
     REQUIRE_NAME,
     REQUIRE_CLASS,
@@ -128,6 +138,16 @@ public class SolrConfig extends Config {
   throws ParserConfigurationException, IOException, SAXException {
     this(new SolrResourceLoader(instanceDir), name, is);
   }
+
+  public static SolrConfig readFromResourceLoader(SolrResourceLoader loader, String name) {
+    try {
+      return new SolrConfig(loader, name, null);
+    }
+    catch (Exception e) {
+      String resource = loader.getConfigDir() + name;
+      throw new SolrException(ErrorCode.SERVER_ERROR, "Error loading solr config from " + resource, e);
+    }
+  }
   
    /** Creates a configuration instance from a resource loader, a configuration name and a stream.
    * If the stream is null, the resource loader will open the configuration stream.
@@ -143,19 +163,19 @@ public class SolrConfig extends Config {
     luceneMatchVersion = getLuceneVersion("luceneMatchVersion");
     String indexConfigPrefix;
 
-    // Old indexDefaults and mainIndex sections are deprecated and fails fast for luceneMatchVersion=>LUCENE_40.
+    // Old indexDefaults and mainIndex sections are deprecated and fails fast for luceneMatchVersion=>LUCENE_4_0_0.
     // For older solrconfig.xml's we allow the old sections, but never mixed with the new <indexConfig>
     boolean hasDeprecatedIndexConfig = (getNode("indexDefaults", false) != null) || (getNode("mainIndex", false) != null);
-    boolean hasNewIndexConfig = getNode("indexConfig", false) != null; 
+    boolean hasNewIndexConfig = getNode("indexConfig", false) != null;
     if(hasDeprecatedIndexConfig){
-      if(luceneMatchVersion.onOrAfter(Version.LUCENE_40)) {
+      if(luceneMatchVersion.onOrAfter(Version.LUCENE_4_0_0_ALPHA)) {
         throw new SolrException(ErrorCode.FORBIDDEN, "<indexDefaults> and <mainIndex> configuration sections are discontinued. Use <indexConfig> instead.");
       } else {
         // Still allow the old sections for older LuceneMatchVersion's
         if(hasNewIndexConfig) {
           throw new SolrException(ErrorCode.FORBIDDEN, "Cannot specify both <indexDefaults>, <mainIndex> and <indexConfig> at the same time. Please use <indexConfig> only.");
         }
-        log.warn("<indexDefaults> and <mainIndex> configuration sections are deprecated and will fail for luceneMatchVersion=LUCENE_40 and later. Please use <indexConfig> instead.");
+        log.warn("<indexDefaults> and <mainIndex> configuration sections are deprecated and will fail for luceneMatchVersion=LUCENE_4_0_0 and later. Please use <indexConfig> instead.");
         defaultIndexConfig = new SolrIndexConfig(this, "indexDefaults", null);
         mainIndexConfig = new SolrIndexConfig(this, "mainIndex", defaultIndexConfig);
         indexConfigPrefix = "mainIndex";
@@ -167,12 +187,12 @@ public class SolrConfig extends Config {
     nrtMode = getBool(indexConfigPrefix+"/nrtMode", true);
     // Parse indexConfig section, using mainIndex as backup in case old config is used
     indexConfig = new SolrIndexConfig(this, "indexConfig", mainIndexConfig);
-   
+
     booleanQueryMaxClauseCount = getInt("query/maxBooleanClauses", BooleanQuery.getMaxClauseCount());
     log.info("Using Lucene MatchVersion: " + luceneMatchVersion);
 
     // Warn about deprecated / discontinued parameters
-    // boolToFilterOptimizer has had no effect since 3.1 
+    // boolToFilterOptimizer has had no effect since 3.1
     if(get("query/boolTofilterOptimizer", null) != null)
       log.warn("solrconfig.xml: <boolTofilterOptimizer> is currently not implemented and has no effect.");
     if(get("query/HashDocSet", null) != null)
@@ -182,13 +202,13 @@ public class SolrConfig extends Config {
 //    filtOptEnabled = getBool("query/boolTofilterOptimizer/@enabled", false);
 //    filtOptCacheSize = getInt("query/boolTofilterOptimizer/@cacheSize",32);
 //    filtOptThreshold = getFloat("query/boolTofilterOptimizer/@threshold",.05f);
-    
+
     useFilterForSortedQuery = getBool("query/useFilterForSortedQuery", false);
     queryResultWindowSize = Math.max(1, getInt("query/queryResultWindowSize", 1));
     queryResultMaxDocsCached = getInt("query/queryResultMaxDocsCached", Integer.MAX_VALUE);
     enableLazyFieldLoading = getBool("query/enableLazyFieldLoading", false);
 
-    
+
     filterCacheConfig = CacheConfig.getConfig(this, "query/filterCache");
     queryResultCacheConfig = CacheConfig.getConfig(this, "query/queryResultCache");
     documentCacheConfig = CacheConfig.getConfig(this, "query/documentCache");
@@ -215,14 +235,14 @@ public class SolrConfig extends Config {
     hashDocSetMaxSize= getInt("//HashDocSet/@maxSize",3000);
 
     httpCachingConfig = new HttpCachingConfig(this);
-    
+
     Node jmx = getNode("jmx", false);
     if (jmx != null) {
-      jmxConfig = new JmxConfiguration(true, 
-                                       get("jmx/@agentId", null), 
+      jmxConfig = new JmxConfiguration(true,
+                                       get("jmx/@agentId", null),
                                        get("jmx/@serviceUrl", null),
                                        get("jmx/@rootName", null));
-                                           
+
     } else {
       jmxConfig = new JmxConfiguration(false, null, null, null);
     }
@@ -244,29 +264,29 @@ public class SolrConfig extends Config {
      // TODO: WTF is up with queryConverter???
      // it aparently *only* works as a singleton? - SOLR-4304
      // and even then -- only if there is a single SpellCheckComponent
-     // because of queryConverter.setAnalyzer
+     // because of queryConverter.setIndexAnalyzer
      loadPluginInfo(QueryConverter.class,"queryConverter",
                     REQUIRE_NAME, REQUIRE_CLASS);
 
      // this is hackish, since it picks up all SolrEventListeners,
-     // regardless of when/how/why they are used (or even if they are 
-     // declared outside of the appropriate context) but there's no nice 
+     // regardless of when/how/why they are used (or even if they are
+     // declared outside of the appropriate context) but there's no nice
      // way around that in the PluginInfo framework
-     loadPluginInfo(SolrEventListener.class, "//listener", 
+     loadPluginInfo(SolrEventListener.class, "//listener",
                     REQUIRE_CLASS, MULTI_OK);
 
-     loadPluginInfo(DirectoryFactory.class,"directoryFactory", 
+     loadPluginInfo(DirectoryFactory.class,"directoryFactory",
                     REQUIRE_CLASS);
-     loadPluginInfo(IndexDeletionPolicy.class,indexConfigPrefix+"/deletionPolicy", 
+     loadPluginInfo(IndexDeletionPolicy.class,indexConfigPrefix+"/deletionPolicy",
                     REQUIRE_CLASS);
-     loadPluginInfo(CodecFactory.class,"codecFactory", 
+     loadPluginInfo(CodecFactory.class,"codecFactory",
                     REQUIRE_CLASS);
-     loadPluginInfo(IndexReaderFactory.class,"indexReaderFactory", 
+     loadPluginInfo(IndexReaderFactory.class,"indexReaderFactory",
                     REQUIRE_CLASS);
-     loadPluginInfo(UpdateRequestProcessorChain.class,"updateRequestProcessorChain", 
+     loadPluginInfo(UpdateRequestProcessorChain.class,"updateRequestProcessorChain",
                     MULTI_OK);
      loadPluginInfo(UpdateLog.class,"updateHandler/updateLog");
-     loadPluginInfo(IndexSchemaFactory.class,"schemaFactory", 
+     loadPluginInfo(IndexSchemaFactory.class,"schemaFactory",
                     REQUIRE_CLASS);
      loadPluginInfo(RestManager.class, "restManager");
      updateHandlerInfo = loadUpdatehandlerInfo();
@@ -285,16 +305,32 @@ public class SolrConfig extends Config {
          "requestDispatcher/@handleSelect", true ); 
      
      addHttpRequestToContext = getBool( 
-         "requestDispatcher/requestParsers/@addHttpRequestToContext", false ); 
+         "requestDispatcher/requestParsers/@addHttpRequestToContext", false );
+
+    loadPluginInfo(InitParams.class, InitParams.TYPE, MULTI_OK);
+    List<PluginInfo> argsInfos =  pluginStore.get(InitParams.class.getName()) ;
+    if(argsInfos!=null){
+      Map<String,InitParams> argsMap = new HashMap<>();
+      for (PluginInfo p : argsInfos) {
+        InitParams args = new InitParams(p);
+        argsMap.put(args.name == null ? String.valueOf(args.hashCode()) : args.name, args);
+      }
+      this.initParams = Collections.unmodifiableMap(argsMap);
+
+    }
 
     solrRequestParsers = new SolrRequestParsers(this);
     Config.log.info("Loaded SolrConfig: " + name);
   }
-
+  private Map<String,InitParams> initParams = Collections.emptyMap();
+  public Map<String, InitParams> getInitParams() {
+    return initParams;
+  }
   protected UpdateHandlerInfo loadUpdatehandlerInfo() {
     return new UpdateHandlerInfo(get("updateHandler/@class",null),
             getInt("updateHandler/autoCommit/maxDocs",-1),
             getInt("updateHandler/autoCommit/maxTime",-1),
+            getBool("updateHandler/indexWriter/closeWaitsForMerges",true),
             getBool("updateHandler/autoCommit/openSearcher",true),
             getInt("updateHandler/commitIntervalLowerBound",-1),
             getInt("updateHandler/autoSoftCommit/maxDocs",-1),
@@ -477,6 +513,7 @@ public class SolrConfig extends Config {
     public final String className;
     public final int autoCommmitMaxDocs,autoCommmitMaxTime,commitIntervalLowerBound,
         autoSoftCommmitMaxDocs,autoSoftCommmitMaxTime;
+    public final boolean indexWriterCloseWaitsForMerges;
     public final boolean openSearcher;  // is opening a new searcher part of hard autocommit?
     public final boolean commitWithinSoftCommit;
 
@@ -485,11 +522,12 @@ public class SolrConfig extends Config {
      * @param autoCommmitMaxTime set -1 as default
      * @param commitIntervalLowerBound set -1 as default
      */
-    public UpdateHandlerInfo(String className, int autoCommmitMaxDocs, int autoCommmitMaxTime, boolean openSearcher, int commitIntervalLowerBound,
+    public UpdateHandlerInfo(String className, int autoCommmitMaxDocs, int autoCommmitMaxTime, boolean indexWriterCloseWaitsForMerges, boolean openSearcher, int commitIntervalLowerBound,
         int autoSoftCommmitMaxDocs, int autoSoftCommmitMaxTime, boolean commitWithinSoftCommit) {
       this.className = className;
       this.autoCommmitMaxDocs = autoCommmitMaxDocs;
       this.autoCommmitMaxTime = autoCommmitMaxTime;
+      this.indexWriterCloseWaitsForMerges = indexWriterCloseWaitsForMerges;
       this.openSearcher = openSearcher;
       this.commitIntervalLowerBound = commitIntervalLowerBound;
       
@@ -584,4 +622,6 @@ public class SolrConfig extends Config {
   public boolean isEnableRemoteStreams() {
     return enableRemoteStreams;
   }
+
+
 }

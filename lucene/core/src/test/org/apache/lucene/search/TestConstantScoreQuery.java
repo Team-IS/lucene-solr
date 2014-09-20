@@ -19,7 +19,6 @@ package org.apache.lucene.search;
 
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
@@ -50,7 +49,7 @@ public class TestConstantScoreQuery extends LuceneTestCase {
   
   private void checkHits(IndexSearcher searcher, Query q, final float expectedScore, final String scorerClassName, final String innerScorerClassName) throws IOException {
     final int[] count = new int[1];
-    searcher.search(q, new Collector() {
+    searcher.search(q, new SimpleCollector() {
       private Scorer scorer;
     
       @Override
@@ -67,10 +66,6 @@ public class TestConstantScoreQuery extends LuceneTestCase {
       public void collect(int doc) throws IOException {
         assertEquals("Score differs from expected", expectedScore, this.scorer.score(), 0);
         count[0]++;
-      }
-      
-      @Override
-      public void setNextReader(AtomicReaderContext context) {
       }
       
       @Override
@@ -95,7 +90,8 @@ public class TestConstantScoreQuery extends LuceneTestCase {
 
       reader = writer.getReader();
       writer.close();
-      searcher = newSearcher(reader);
+      // we don't wrap with AssertingIndexSearcher in order to have the original scorer in setScorer.
+      searcher = newSearcher(reader, true, false);
       
       // set a similarity that does not normalize our boost away
       searcher.setSimilarity(new DefaultSimilarity() {

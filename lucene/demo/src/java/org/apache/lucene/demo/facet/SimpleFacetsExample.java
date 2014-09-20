@@ -57,8 +57,8 @@ public class SimpleFacetsExample {
   
   /** Build the example index. */
   private void index() throws IOException {
-    IndexWriter indexWriter = new IndexWriter(indexDir, new IndexWriterConfig(FacetExamples.EXAMPLES_VER, 
-        new WhitespaceAnalyzer(FacetExamples.EXAMPLES_VER)));
+    IndexWriter indexWriter = new IndexWriter(indexDir, new IndexWriterConfig(
+        new WhitespaceAnalyzer()));
 
     // Writes facet ords to a separate directory from the main index
     DirectoryTaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(taxoDir);

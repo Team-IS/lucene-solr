@@ -86,7 +86,7 @@ public class LBHttpSolrServer extends SolrServer {
   }
 
   // keys to the maps are currently of the form "http://localhost:8983/solr"
-  // which should be equivalent to CommonsHttpSolrServer.getBaseURL()
+  // which should be equivalent to HttpSolrServer.getBaseURL()
   private final Map<String, ServerWrapper> aliveServers = new LinkedHashMap<>();
   // access to aliveServers should be synchronized on itself
   
@@ -106,7 +106,7 @@ public class LBHttpSolrServer extends SolrServer {
   private volatile ResponseParser parser;
   private volatile RequestWriter requestWriter;
 
-  private Set<String> queryParams;
+  private Set<String> queryParams = new HashSet<>();
 
   static {
     solrQuery.setRows(0);
@@ -244,6 +244,9 @@ public class LBHttpSolrServer extends SolrServer {
   public void setQueryParams(Set<String> queryParams) {
     this.queryParams = queryParams;
   }
+  public void addQueryParams(String queryOnlyParam) {
+    this.queryParams.add(queryOnlyParam) ;
+  }
 
   public static String normalize(String server) {
     if (server.endsWith("/"))
@@ -298,85 +301,17 @@ public class LBHttpSolrServer extends SolrServer {
       rsp.server = serverStr;
       HttpSolrServer server = makeServer(serverStr);
 
-      try {
-        rsp.rsp = server.request(req.getRequest());
+      ex = doRequest(server, req, rsp, isUpdate, false, null);
+      if (ex == null) {
         return rsp; // SUCCESS
-      } catch (SolrException e) {
-        // we retry on 404 or 403 or 503 or 500
-        // unless it's an update - then we only retry on connect exceptions
-        if (!isUpdate && RETRY_CODES.contains(e.code())) {
-          ex = addZombie(server, e);
-        } else {
-          // Server is alive but the request was likely malformed or invalid
-          throw e;
-        }
-      } catch (SocketException e) {
-        if (!isUpdate || e instanceof ConnectException) {
-          ex = addZombie(server, e);
-        } else {
-          throw e;
-        }
-      } catch (SocketTimeoutException e) {
-        if (!isUpdate) {
-          ex = addZombie(server, e);
-        } else {
-          throw e;
-        }
-      } catch (SolrServerException e) {
-        Throwable rootCause = e.getRootCause();
-        if (!isUpdate && rootCause instanceof IOException) {
-          ex = addZombie(server, e);
-        } else if (isUpdate && rootCause instanceof ConnectException) {
-          ex = addZombie(server, e);
-        } else {
-          throw e;
-        }
-      } catch (Exception e) {
-        throw new SolrServerException(e);
       }
     }
 
     // try the servers we previously skipped
     for (ServerWrapper wrapper : skipped) {
-      try {
-        rsp.rsp = wrapper.solrServer.request(req.getRequest());
-        zombieServers.remove(wrapper.getKey());
-        return rsp; // SUCCESS
-      } catch (SolrException e) {
-        // we retry on 404 or 403 or 503 or 500
-        // unless it's an update - then we only retry on connect exceptions
-        if (!isUpdate && RETRY_CODES.contains(e.code())) {
-          ex = e;
-          // already a zombie, no need to re-add
-        } else {
-          // Server is alive but the request was malformed or invalid
-          zombieServers.remove(wrapper.getKey());
-          throw e;
-        }
-
-      } catch (SocketException e) {
-        if (!isUpdate || e instanceof ConnectException) {
-          ex = e;
-        } else {
-          throw e;
-        }
-      } catch (SocketTimeoutException e) {
-        if (!isUpdate) {
-          ex = e;
-        } else {
-          throw e;
-        }
-      } catch (SolrServerException e) {
-        Throwable rootCause = e.getRootCause();
-        if (!isUpdate && rootCause instanceof IOException) {
-          ex = e;
-        } else if (isUpdate && rootCause instanceof ConnectException) {
-          ex = e;
-        } else {
-          throw e;
-        }
-      } catch (Exception e) {
-        throw new SolrServerException(e);
+      ex = doRequest(wrapper.solrServer, req, rsp, isUpdate, true, wrapper.getKey());
+      if (ex == null) {
+         return rsp; // SUCCESS
       }
     }
 
@@ -401,7 +336,53 @@ public class LBHttpSolrServer extends SolrServer {
     return e;
   }  
 
+  protected Exception doRequest(HttpSolrServer server, Req req, Rsp rsp, boolean isUpdate,
+      boolean isZombie, String zombieKey) throws SolrServerException, IOException {
+    Exception ex = null;
+    try {
+      rsp.rsp = server.request(req.getRequest());
+      if (isZombie) {
+        zombieServers.remove(zombieKey);
+      }
+    } catch (SolrException e) {
+      // we retry on 404 or 403 or 503 or 500
+      // unless it's an update - then we only retry on connect exception
+      if (!isUpdate && RETRY_CODES.contains(e.code())) {
+        ex = (!isZombie) ? addZombie(server, e) : e;
+      } else {
+        // Server is alive but the request was likely malformed or invalid
+        if (isZombie) {
+          zombieServers.remove(zombieKey);
+        }
+        throw e;
+      }
+    } catch (SocketException e) {
+      if (!isUpdate || e instanceof ConnectException) {
+        ex = (!isZombie) ? addZombie(server, e) : e;
+      } else {
+        throw e;
+      }
+    } catch (SocketTimeoutException e) {
+      if (!isUpdate) {
+        ex = (!isZombie) ? addZombie(server, e) : e;
+      } else {
+        throw e;
+      }
+    } catch (SolrServerException e) {
+      Throwable rootCause = e.getRootCause();
+      if (!isUpdate && rootCause instanceof IOException) {
+        ex = (!isZombie) ? addZombie(server, e) : e;
+      } else if (isUpdate && rootCause instanceof ConnectException) {
+        ex = (!isZombie) ? addZombie(server, e) : e;
+      } else {
+        throw e;
+      }
+    } catch (Exception e) {
+      throw new SolrServerException(e);
+    }
 
+    return ex;
+  }
 
   private void updateAliveList() {
     synchronized (aliveServers) {
@@ -492,7 +473,7 @@ public class LBHttpSolrServer extends SolrServer {
     Map<String,ServerWrapper> justFailed = null;
 
     for (int attempts=0; attempts<maxTries; attempts++) {
-      int count = counter.incrementAndGet();      
+      int count = counter.incrementAndGet() & Integer.MAX_VALUE;
       ServerWrapper wrapper = serverList[count % serverList.length];
       wrapper.lastUsed = System.currentTimeMillis();
 

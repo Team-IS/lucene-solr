@@ -17,10 +17,7 @@ package org.apache.lucene.util;
  * limitations under the License.
  */
 
-import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -28,23 +25,26 @@ import java.io.PrintStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.CharBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import java.util.zip.ZipInputStream;
 
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.DocValuesFormat;
 import org.apache.lucene.codecs.PostingsFormat;
-import org.apache.lucene.codecs.lucene46.Lucene46Codec;
+import org.apache.lucene.codecs.lucene410.Lucene410Codec;
 import org.apache.lucene.codecs.perfield.PerFieldDocValuesFormat;
 import org.apache.lucene.codecs.perfield.PerFieldPostingsFormat;
 import org.apache.lucene.document.BinaryDocValuesField;
@@ -69,6 +69,7 @@ import org.apache.lucene.index.ConcurrentMergeScheduler;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.FieldInfo.DocValuesType;
+import org.apache.lucene.index.FilterAtomicReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexableField;
@@ -76,6 +77,7 @@ import org.apache.lucene.index.LogMergePolicy;
 import org.apache.lucene.index.MergePolicy;
 import org.apache.lucene.index.MergeScheduler;
 import org.apache.lucene.index.MultiFields;
+import org.apache.lucene.index.SegmentReader;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.index.TieredMergePolicy;
@@ -87,7 +89,6 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.junit.Assert;
 
-import com.carrotsearch.randomizedtesting.RandomizedContext;
 import com.carrotsearch.randomizedtesting.generators.RandomInts;
 import com.carrotsearch.randomizedtesting.generators.RandomPicks;
 
@@ -99,102 +100,95 @@ public final class TestUtil {
     //
   }
 
-  // the max number of retries we're going to do in getTempDir
-  private static final int GET_TEMP_DIR_RETRY_THRESHOLD = 1000;
-  
-  /**
-   * Returns a temp directory, based on the given description. Creates the
-   * directory.
-   */
-  public static File getTempDir(String desc) {
-    if (desc.length() < 3) {
-      throw new IllegalArgumentException("description must be at least 3 characters");
-    }
-    // always pull a long from master random. that way, the randomness of the test
-    // is not affected by whether it initialized the counter (in genTempFile) or not.
-    // note that the Random used by genTempFile is *not* the master Random, and therefore
-    // does not affect the randomness of the test.
-    final Random random = new Random(RandomizedContext.current().getRandom().nextLong());
-    int attempt = 0;
-    File f;
-    do {
-      f = genTempFile(random, desc, "tmp", LuceneTestCase.TEMP_DIR);
-    } while (!f.mkdir() && (attempt++) < GET_TEMP_DIR_RETRY_THRESHOLD);
-    
-    if (attempt > GET_TEMP_DIR_RETRY_THRESHOLD) {
-      throw new RuntimeException(
-          "failed to get a temporary dir too many times. check your temp directory and consider manually cleaning it.");
-    }
-    
-    LuceneTestCase.closeAfterSuite(new CloseableFile(f, LuceneTestCase.suiteFailureMarker));
-    return f;
-  }
-
-  /**
-   * Deletes a directory and everything underneath it.
-   */
-  public static void rmDir(File dir) throws IOException {
-    if (dir.exists()) {
-      if (dir.isFile() && !dir.delete()) {
-        throw new IOException("could not delete " + dir);
-      }
-      for (File f : dir.listFiles()) {
-        if (f.isDirectory()) {
-          rmDir(f);
-        } else {
-          if (!f.delete()) {
-            throw new IOException("could not delete " + f);
-          }
-        }
-      }
-      if (!dir.delete()) {
-        throw new IOException("could not delete " + dir);
-      }
-    }
-  }
-
   /** 
-   * Convenience method: Unzip zipName + ".zip" under destDir, removing destDir first 
+   * Convenience method unzipping zipName into destDir, cleaning up 
+   * destDir first.
+   * Closes the given InputStream after extracting! 
    */
-  public static void unzip(File zipName, File destDir) throws IOException {
-    
-    ZipFile zipFile = new ZipFile(zipName);
-    
-    Enumeration<? extends ZipEntry> entries = zipFile.entries();
-    
-    rmDir(destDir);
+  public static void unzip(InputStream in, Path destDir) throws IOException {
+    IOUtils.rm(destDir);
+    Files.createDirectory(destDir);
 
-    destDir.mkdir();
-    LuceneTestCase.closeAfterSuite(new CloseableFile(destDir, LuceneTestCase.suiteFailureMarker));
-
-    while (entries.hasMoreElements()) {
-      ZipEntry entry = entries.nextElement();
-      
-      InputStream in = zipFile.getInputStream(entry);
-      File targetFile = new File(destDir, entry.getName());
-      if (entry.isDirectory()) {
-        // allow unzipping with directory structure
-        targetFile.mkdirs();
-      } else {
-        if (targetFile.getParentFile()!=null) {
-          // be on the safe side: do not rely on that directories are always extracted
-          // before their children (although this makes sense, but is it guaranteed?)
-          targetFile.getParentFile().mkdirs();   
-        }
-        OutputStream out = new BufferedOutputStream(new FileOutputStream(targetFile));
+    try (ZipInputStream zipInput = new ZipInputStream(in)) {
+      ZipEntry entry;
+      byte[] buffer = new byte[8192];
+      while ((entry = zipInput.getNextEntry()) != null) {
+        Path targetFile = destDir.resolve(entry.getName());
         
-        byte[] buffer = new byte[8192];
-        int len;
-        while((len = in.read(buffer)) >= 0) {
-          out.write(buffer, 0, len);
+        // be on the safe side: do not rely on that directories are always extracted
+        // before their children (although this makes sense, but is it guaranteed?)
+        Files.createDirectories(targetFile.getParent());
+        if (!entry.isDirectory()) {
+          OutputStream out = Files.newOutputStream(targetFile);
+          int len;
+          while((len = zipInput.read(buffer)) >= 0) {
+            out.write(buffer, 0, len);
+          }
+          out.close();
         }
-        
-        in.close();
-        out.close();
+        zipInput.closeEntry();
       }
     }
-    
-    zipFile.close();
+  }
+  
+  /** 
+   * Checks that the provided iterator is well-formed.
+   * <ul>
+   *   <li>is read-only: does not allow {@code remove}
+   *   <li>returns {@code expectedSize} number of elements
+   *   <li>does not return null elements, unless {@code allowNull} is true.
+   *   <li>throws NoSuchElementException if {@code next} is called
+   *       after {@code hasNext} returns false. 
+   * </ul>
+   */
+  public static <T> void checkIterator(Iterator<T> iterator, long expectedSize, boolean allowNull) {
+    for (long i = 0; i < expectedSize; i++) {
+      boolean hasNext = iterator.hasNext();
+      assert hasNext;
+      T v = iterator.next();
+      assert allowNull || v != null;
+      try {
+        iterator.remove();
+        throw new AssertionError("broken iterator (supports remove): " + iterator);
+      } catch (UnsupportedOperationException expected) {
+        // ok
+      }
+    }
+    assert !iterator.hasNext();
+    try {
+      iterator.next();
+      throw new AssertionError("broken iterator (allows next() when hasNext==false) " + iterator);
+    } catch (NoSuchElementException expected) {
+      // ok
+    }
+  }
+  
+  /** 
+   * Checks that the provided iterator is well-formed.
+   * <ul>
+   *   <li>is read-only: does not allow {@code remove}
+   *   <li>does not return null elements.
+   *   <li>throws NoSuchElementException if {@code next} is called
+   *       after {@code hasNext} returns false. 
+   * </ul>
+   */
+  public static <T> void checkIterator(Iterator<T> iterator) {
+    while (iterator.hasNext()) {
+      T v = iterator.next();
+      assert v != null;
+      try {
+        iterator.remove();
+        throw new AssertionError("broken iterator (supports remove): " + iterator);
+      } catch (UnsupportedOperationException expected) {
+        // ok
+      }
+    }
+    try {
+      iterator.next();
+      throw new AssertionError("broken iterator (allows next() when hasNext==false) " + iterator);
+    } catch (NoSuchElementException expected) {
+      // ok
+    }
   }
   
   public static void syncConcurrentMerges(IndexWriter writer) {
@@ -214,18 +208,25 @@ public final class TestUtil {
   }
 
   public static CheckIndex.Status checkIndex(Directory dir, boolean crossCheckTermVectors) throws IOException {
+    return checkIndex(dir, crossCheckTermVectors, false);
+  }
+
+  /** If failFast is true, then throw the first exception when index corruption is hit, instead of moving on to other fields/segments to
+   *  look for any other corruption.  */
+  public static CheckIndex.Status checkIndex(Directory dir, boolean crossCheckTermVectors, boolean failFast) throws IOException {
     ByteArrayOutputStream bos = new ByteArrayOutputStream(1024);
     CheckIndex checker = new CheckIndex(dir);
     checker.setCrossCheckTermVectors(crossCheckTermVectors);
-    checker.setInfoStream(new PrintStream(bos, false, "UTF-8"), false);
+    checker.setFailFast(failFast);
+    checker.setInfoStream(new PrintStream(bos, false, IOUtils.UTF_8), false);
     CheckIndex.Status indexStatus = checker.checkIndex(null);
     if (indexStatus == null || indexStatus.clean == false) {
       System.out.println("CheckIndex failed");
-      System.out.println(bos.toString("UTF-8"));
+      System.out.println(bos.toString(IOUtils.UTF_8));
       throw new RuntimeException("CheckIndex failed");
     } else {
       if (LuceneTestCase.INFOSTREAM) {
-        System.out.println(bos.toString("UTF-8"));
+        System.out.println(bos.toString(IOUtils.UTF_8));
       }
       return indexStatus;
     }
@@ -241,26 +242,27 @@ public final class TestUtil {
   
   public static void checkReader(AtomicReader reader, boolean crossCheckTermVectors) throws IOException {
     ByteArrayOutputStream bos = new ByteArrayOutputStream(1024);
-    PrintStream infoStream = new PrintStream(bos, false, "UTF-8");
+    PrintStream infoStream = new PrintStream(bos, false, IOUtils.UTF_8);
 
-    FieldNormStatus fieldNormStatus = CheckIndex.testFieldNorms(reader, infoStream);
-    TermIndexStatus termIndexStatus = CheckIndex.testPostings(reader, infoStream);
-    StoredFieldStatus storedFieldStatus = CheckIndex.testStoredFields(reader, infoStream);
-    TermVectorStatus termVectorStatus = CheckIndex.testTermVectors(reader, infoStream, false, crossCheckTermVectors);
-    DocValuesStatus docValuesStatus = CheckIndex.testDocValues(reader, infoStream);
+    reader.checkIntegrity();
+    FieldNormStatus fieldNormStatus = CheckIndex.testFieldNorms(reader, infoStream, true);
+    TermIndexStatus termIndexStatus = CheckIndex.testPostings(reader, infoStream, false, true);
+    StoredFieldStatus storedFieldStatus = CheckIndex.testStoredFields(reader, infoStream, true);
+    TermVectorStatus termVectorStatus = CheckIndex.testTermVectors(reader, infoStream, false, crossCheckTermVectors, true);
+    DocValuesStatus docValuesStatus = CheckIndex.testDocValues(reader, infoStream, true);
     
-    if (fieldNormStatus.error != null || 
-      termIndexStatus.error != null ||
-      storedFieldStatus.error != null ||
-      termVectorStatus.error != null ||
-      docValuesStatus.error != null) {
-      System.out.println("CheckReader failed");
-      System.out.println(bos.toString("UTF-8"));
-      throw new RuntimeException("CheckReader failed");
-    } else {
-      if (LuceneTestCase.INFOSTREAM) {
-        System.out.println(bos.toString("UTF-8"));
+    if (LuceneTestCase.INFOSTREAM) {
+      System.out.println(bos.toString(IOUtils.UTF_8));
+    }
+    
+    AtomicReader unwrapped = FilterAtomicReader.unwrap(reader);
+    if (unwrapped instanceof SegmentReader) {
+      SegmentReader sr = (SegmentReader) unwrapped;
+      long bytesUsed = sr.ramBytesUsed(); 
+      if (sr.ramBytesUsed() < 0) {
+        throw new IllegalStateException("invalid ramBytesUsed for reader: " + bytesUsed);
       }
+      assert Accountables.toString(sr) != null;
     }
   }
 
@@ -701,7 +703,7 @@ public final class TestUtil {
     if (LuceneTestCase.VERBOSE) {
       System.out.println("forcing postings format to:" + format);
     }
-    return new Lucene46Codec() {
+    return new Lucene410Codec() {
       @Override
       public PostingsFormat getPostingsFormatForField(String field) {
         return format;
@@ -719,7 +721,7 @@ public final class TestUtil {
     if (LuceneTestCase.VERBOSE) {
       System.out.println("forcing docvalues format to:" + format);
     }
-    return new Lucene46Codec() {
+    return new Lucene410Codec() {
       @Override
       public DocValuesFormat getDocValuesFormatForField(String field) {
         return format;
@@ -807,52 +809,6 @@ public final class TestUtil {
       }
     });
     Assert.assertEquals("Reflection does not produce same map", reflectedValues, map);
-  }
-  
-  /** 
-   * insecure, fast version of File.createTempFile
-   * uses Random instead of SecureRandom.
-   */
-  public static File createTempFile(String prefix, String suffix, File directory)
-      throws IOException {
-    if (prefix.length() < 3) {
-      throw new IllegalArgumentException("prefix must be at least 3 characters");
-    }
-    String newSuffix = suffix == null ? ".tmp" : suffix;
-    // always pull a long from master random. that way, the randomness of the test
-    // is not affected by whether it initialized the counter (in genTempFile) or not.
-    // note that the Random used by genTempFile is *not* the master Random, and therefore
-    // does not affect the randomness of the test.
-    final Random random = new Random(RandomizedContext.current().getRandom().nextLong());
-    File result;
-    do {
-      result = genTempFile(random, prefix, newSuffix, directory);
-    } while (!result.createNewFile());
-    return result;
-  }
-
-  /* identify for differnt VM processes */
-  private static String counterBase;
-  
-  /* Temp file counter */
-  private static int counter;
-  private static final Object counterLock = new Object();
-
-  private static File genTempFile(Random random, String prefix, String suffix, File directory) {
-    final int identify;
-    synchronized (counterLock) {
-      if (counterBase == null) { // init once
-        counter = random.nextInt() & 0xFFFF; // up to five digits number
-        counterBase = Integer.toString(counter);
-      }
-      identify = counter++;
-    }
-    StringBuilder newName = new StringBuilder();
-    newName.append(prefix);
-    newName.append(counterBase);
-    newName.append(identify);
-    newName.append(suffix);
-    return new File(directory, newName.toString());
   }
 
   public static void assertEquals(TopDocs expected, TopDocs actual) {
@@ -971,9 +927,9 @@ public final class TestUtil {
   public static CharSequence bytesToCharSequence(BytesRef ref, Random random) {
     switch(random.nextInt(5)) {
     case 4:
-      CharsRef chars = new CharsRef(ref.length);
-      UnicodeUtil.UTF8toUTF16(ref.bytes, ref.offset, ref.length, chars);
-      return chars;
+      final char[] chars = new char[ref.length];
+      final int len = UnicodeUtil.UTF8toUTF16(ref.bytes, ref.offset, ref.length, chars);
+      return new CharsRef(chars, 0, len);
     case 3:
       return CharBuffer.wrap(ref.utf8ToString());
     default:
@@ -991,7 +947,7 @@ public final class TestUtil {
         ex.awaitTermination(1, TimeUnit.SECONDS);
       } catch (InterruptedException e) {
         // Just report it on the syserr.
-        System.err.println("Could not properly shutdown executor service.");
+        System.err.println("Could not properly close executor service.");
         e.printStackTrace(System.err);
       }
     }

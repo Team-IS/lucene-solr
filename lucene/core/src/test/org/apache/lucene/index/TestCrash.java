@@ -31,14 +31,14 @@ import org.apache.lucene.util.LuceneTestCase;
 public class TestCrash extends LuceneTestCase {
 
   private IndexWriter initIndex(Random random, boolean initialCommit) throws IOException {
-    return initIndex(random, newMockDirectory(random), initialCommit);
+    return initIndex(random, newMockDirectory(random), initialCommit, true);
   }
 
-  private IndexWriter initIndex(Random random, MockDirectoryWrapper dir, boolean initialCommit) throws IOException {
+  private IndexWriter initIndex(Random random, MockDirectoryWrapper dir, boolean initialCommit, boolean commitOnClose) throws IOException {
     dir.setLockFactory(NoLockFactory.getNoLockFactory());
 
-    IndexWriter writer  = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setMaxBufferedDocs(10).setMergeScheduler(new ConcurrentMergeScheduler()));
+    IndexWriter writer  = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random))
+        .setMaxBufferedDocs(10).setMergeScheduler(new ConcurrentMergeScheduler()).setCommitOnClose(commitOnClose));
     ((ConcurrentMergeScheduler) writer.getConfig().getMergeScheduler()).setSuppressExceptions();
     if (initialCommit) {
       writer.commit();
@@ -93,9 +93,13 @@ public class TestCrash extends LuceneTestCase {
     // This test relies on being able to open a reader before any commit
     // happened, so we must create an initial commit just to allow that, but
     // before any documents were added.
-    System.out.println("TEST: initIndex");
+    if (VERBOSE) {
+      System.out.println("TEST: initIndex");
+    }
     IndexWriter writer = initIndex(random(), true);
-    System.out.println("TEST: done initIndex");
+    if (VERBOSE) {
+      System.out.println("TEST: done initIndex");
+    }
     MockDirectoryWrapper dir = (MockDirectoryWrapper) writer.getDirectory();
 
     // We create leftover files because merging could be
@@ -103,9 +107,11 @@ public class TestCrash extends LuceneTestCase {
     dir.setAssertNoUnrefencedFilesOnClose(false);
 
     dir.setPreventDoubleWrite(false);
-    System.out.println("TEST: now crash");
+    if (VERBOSE) {
+      System.out.println("TEST: now crash");
+    }
     crash(writer);
-    writer = initIndex(random(), dir, false);
+    writer = initIndex(random(), dir, false, true);
     writer.close();
 
     IndexReader reader = DirectoryReader.open(dir);
@@ -131,7 +137,7 @@ public class TestCrash extends LuceneTestCase {
     dir.setAssertNoUnrefencedFilesOnClose(false);
 
     writer.close();
-    writer = initIndex(random(), dir, false);
+    writer = initIndex(random(), dir, false, true);
     assertEquals(314, writer.maxDoc());
     crash(writer);
 
@@ -180,11 +186,15 @@ public class TestCrash extends LuceneTestCase {
   }
 
   public void testCrashAfterCloseNoWait() throws IOException {
-    
-    IndexWriter writer = initIndex(random(), false);
-    MockDirectoryWrapper dir = (MockDirectoryWrapper) writer.getDirectory();
+    Random random = random();
+    MockDirectoryWrapper dir = newMockDirectory(random);
+    IndexWriter writer = initIndex(random, dir, false, false);
 
-    writer.close(false);
+    try {
+      writer.commit();
+    } finally {
+      writer.close();
+    }
 
     dir.crash();
 

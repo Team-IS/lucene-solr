@@ -25,12 +25,11 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.Constants;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
-import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.Version;
 
 public class TestSegmentMerger extends LuceneTestCase {
   //The variables for the new merged segment
@@ -79,19 +78,19 @@ public class TestSegmentMerger extends LuceneTestCase {
 
   public void testMerge() throws IOException {
     final Codec codec = Codec.getDefault();
-    final SegmentInfo si = new SegmentInfo(mergedDir, Constants.LUCENE_MAIN_VERSION, mergedSegment, -1, false, codec, null);
+    final SegmentInfo si = new SegmentInfo(mergedDir, Version.LATEST, mergedSegment, -1, false, codec, null);
 
     SegmentMerger merger = new SegmentMerger(Arrays.<AtomicReader>asList(reader1, reader2),
         si, InfoStream.getDefault(), mergedDir,
-        MergeState.CheckAbort.NONE, new FieldInfos.FieldNumbers(), newIOContext(random()));
+        MergeState.CheckAbort.NONE, new FieldInfos.FieldNumbers(), newIOContext(random()), true);
     MergeState mergeState = merger.merge();
     int docsMerged = mergeState.segmentInfo.getDocCount();
     assertTrue(docsMerged == 2);
     //Should be able to open a new SegmentReader against the new directory
     SegmentReader mergedReader = new SegmentReader(new SegmentCommitInfo(
-                                                         new SegmentInfo(mergedDir, Constants.LUCENE_MAIN_VERSION, mergedSegment, docsMerged,
+                                                         new SegmentInfo(mergedDir, Version.LATEST, mergedSegment, docsMerged,
                                                                          false, codec, null),
-                                                         0, -1L, -1L),
+                                                         0, -1L, -1L, -1L),
                                                    newIOContext(random()));
     assertTrue(mergedReader != null);
     assertTrue(mergedReader.numDocs() == 2);

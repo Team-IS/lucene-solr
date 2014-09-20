@@ -35,6 +35,7 @@ import org.apache.lucene.replicator.IndexAndTaxonomyRevision.SnapshotDirectoryTa
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.IOUtils;
 import org.junit.Test;
 
@@ -50,7 +51,7 @@ public class IndexAndTaxonomyRevisionTest extends ReplicatorTestCase {
   @Test
   public void testNoCommit() throws Exception {
     Directory indexDir = newDirectory();
-    IndexWriterConfig conf = new IndexWriterConfig(TEST_VERSION_CURRENT, null);
+    IndexWriterConfig conf = new IndexWriterConfig(null);
     conf.setIndexDeletionPolicy(new SnapshotDeletionPolicy(conf.getIndexDeletionPolicy()));
     IndexWriter indexWriter = new IndexWriter(indexDir, conf);
     
@@ -62,19 +63,24 @@ public class IndexAndTaxonomyRevisionTest extends ReplicatorTestCase {
     } catch (IllegalStateException e) {
       // expected
     } finally {
-      IOUtils.close(indexWriter, taxoWriter, taxoDir, indexDir);
+      indexWriter.close();
+      IOUtils.close(taxoWriter, taxoDir, indexDir);
     }
   }
   
   @Test
   public void testRevisionRelease() throws Exception {
     Directory indexDir = newDirectory();
-    IndexWriterConfig conf = new IndexWriterConfig(TEST_VERSION_CURRENT, null);
+    IndexWriterConfig conf = new IndexWriterConfig(null);
     conf.setIndexDeletionPolicy(new SnapshotDeletionPolicy(conf.getIndexDeletionPolicy()));
     IndexWriter indexWriter = new IndexWriter(indexDir, conf);
     
     Directory taxoDir = newDirectory();
     SnapshotDirectoryTaxonomyWriter taxoWriter = new SnapshotDirectoryTaxonomyWriter(taxoDir);
+    // we look to see that certain files are deleted:
+    if (indexDir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)indexDir).setEnableVirusScanner(false);
+    }
     try {
       indexWriter.addDocument(newDocument(taxoWriter));
       indexWriter.commit();
@@ -82,8 +88,8 @@ public class IndexAndTaxonomyRevisionTest extends ReplicatorTestCase {
       Revision rev1 = new IndexAndTaxonomyRevision(indexWriter, taxoWriter);
       // releasing that revision should not delete the files
       rev1.release();
-      assertTrue(indexDir.fileExists(IndexFileNames.SEGMENTS + "_1"));
-      assertTrue(taxoDir.fileExists(IndexFileNames.SEGMENTS + "_1"));
+      assertTrue(slowFileExists(indexDir, IndexFileNames.SEGMENTS + "_1"));
+      assertTrue(slowFileExists(taxoDir, IndexFileNames.SEGMENTS + "_1"));
       
       rev1 = new IndexAndTaxonomyRevision(indexWriter, taxoWriter); // create revision again, so the files are snapshotted
       indexWriter.addDocument(newDocument(taxoWriter));
@@ -91,16 +97,21 @@ public class IndexAndTaxonomyRevisionTest extends ReplicatorTestCase {
       taxoWriter.commit();
       assertNotNull(new IndexAndTaxonomyRevision(indexWriter, taxoWriter));
       rev1.release(); // this release should trigger the delete of segments_1
-      assertFalse(indexDir.fileExists(IndexFileNames.SEGMENTS + "_1"));
+      assertFalse(slowFileExists(indexDir, IndexFileNames.SEGMENTS + "_1"));
+      indexWriter.close();
     } finally {
       IOUtils.close(indexWriter, taxoWriter, taxoDir, indexDir);
+      if (indexDir instanceof MockDirectoryWrapper) {
+        // set back to on for other tests
+        ((MockDirectoryWrapper)indexDir).setEnableVirusScanner(true);
+      }
     }
   }
   
   @Test
   public void testSegmentsFileLast() throws Exception {
     Directory indexDir = newDirectory();
-    IndexWriterConfig conf = new IndexWriterConfig(TEST_VERSION_CURRENT, null);
+    IndexWriterConfig conf = new IndexWriterConfig(null);
     conf.setIndexDeletionPolicy(new SnapshotDeletionPolicy(conf.getIndexDeletionPolicy()));
     IndexWriter indexWriter = new IndexWriter(indexDir, conf);
     
@@ -115,8 +126,9 @@ public class IndexAndTaxonomyRevisionTest extends ReplicatorTestCase {
       assertEquals(2, sourceFiles.size());
       for (List<RevisionFile> files : sourceFiles.values()) {
         String lastFile = files.get(files.size() - 1).fileName;
-        assertTrue(lastFile.startsWith(IndexFileNames.SEGMENTS) && !lastFile.equals(IndexFileNames.SEGMENTS_GEN));
+        assertTrue(lastFile.startsWith(IndexFileNames.SEGMENTS));
       }
+      indexWriter.close();
     } finally {
       IOUtils.close(indexWriter, taxoWriter, taxoDir, indexDir);
     }
@@ -125,7 +137,7 @@ public class IndexAndTaxonomyRevisionTest extends ReplicatorTestCase {
   @Test
   public void testOpen() throws Exception {
     Directory indexDir = newDirectory();
-    IndexWriterConfig conf = new IndexWriterConfig(TEST_VERSION_CURRENT, null);
+    IndexWriterConfig conf = new IndexWriterConfig(null);
     conf.setIndexDeletionPolicy(new SnapshotDeletionPolicy(conf.getIndexDeletionPolicy()));
     IndexWriter indexWriter = new IndexWriter(indexDir, conf);
     
@@ -138,6 +150,7 @@ public class IndexAndTaxonomyRevisionTest extends ReplicatorTestCase {
       Revision rev = new IndexAndTaxonomyRevision(indexWriter, taxoWriter);
       for (Entry<String,List<RevisionFile>> e : rev.getSourceFiles().entrySet()) {
         String source = e.getKey();
+        @SuppressWarnings("resource") // silly, both directories are closed in the end
         Directory dir = source.equals(IndexAndTaxonomyRevision.INDEX_SOURCE) ? indexDir : taxoDir;
         for (RevisionFile file : e.getValue()) {
           IndexInput src = dir.openInput(file.fileName, IOContext.READONCE);
@@ -161,6 +174,7 @@ public class IndexAndTaxonomyRevisionTest extends ReplicatorTestCase {
           IOUtils.close(src, in);
         }
       }
+      indexWriter.close();
     } finally {
       IOUtils.close(indexWriter, taxoWriter, taxoDir, indexDir);
     }

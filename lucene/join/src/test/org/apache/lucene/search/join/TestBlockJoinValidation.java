@@ -62,7 +62,7 @@ public class TestBlockJoinValidation extends LuceneTestCase {
   @Before
   public void before() throws Exception {
     directory = newDirectory();
-    final IndexWriterConfig config = new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    final IndexWriterConfig config = new IndexWriterConfig(new MockAnalyzer(random()));
     final IndexWriter indexWriter = new IndexWriter(directory, config);
     for (int i = 0; i < AMOUNT_OF_SEGMENTS; i++) {
       List<Document> segmentDocs = createDocsForSegment(i);

@@ -17,30 +17,33 @@ package org.apache.lucene.util.packed;
  * limitations under the License.
  */
 
+import static org.apache.lucene.util.BitUtil.zigZagDecode;
 import static org.apache.lucene.util.packed.AbstractBlockPackedWriter.BPV_SHIFT;
 import static org.apache.lucene.util.packed.AbstractBlockPackedWriter.MAX_BLOCK_SIZE;
 import static org.apache.lucene.util.packed.AbstractBlockPackedWriter.MIN_BLOCK_SIZE;
 import static org.apache.lucene.util.packed.AbstractBlockPackedWriter.MIN_VALUE_EQUALS_0;
 import static org.apache.lucene.util.packed.BlockPackedReaderIterator.readVLong;
-import static org.apache.lucene.util.packed.BlockPackedReaderIterator.zigZagDecode;
 import static org.apache.lucene.util.packed.PackedInts.checkBlockSize;
 import static org.apache.lucene.util.packed.PackedInts.numBlocks;
 
 import java.io.IOException;
+import java.util.Collections;
 
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.LongValues;
 
 /**
  * Provides random access to a stream written with {@link BlockPackedWriter}.
  * @lucene.internal
  */
-public final class BlockPackedReader extends LongValues {
+public final class BlockPackedReader extends LongValues implements Accountable {
 
   private final int blockShift, blockMask;
   private final long valueCount;
   private final long[] minValues;
   private final PackedInts.Reader[] subReaders;
+  private final long sumBPV;
 
   /** Sole constructor. */
   public BlockPackedReader(IndexInput in, int packedIntsVersion, int blockSize, long valueCount, boolean direct) throws IOException {
@@ -50,9 +53,11 @@ public final class BlockPackedReader extends LongValues {
     final int numBlocks = numBlocks(valueCount, blockSize);
     long[] minValues = null;
     subReaders = new PackedInts.Reader[numBlocks];
+    long sumBPV = 0;
     for (int i = 0; i < numBlocks; ++i) {
       final int token = in.readByte() & 0xFF;
       final int bitsPerValue = token >>> BPV_SHIFT;
+      sumBPV += bitsPerValue;
       if (bitsPerValue > 64) {
         throw new IOException("Corrupted");
       }
@@ -76,6 +81,7 @@ public final class BlockPackedReader extends LongValues {
       }
     }
     this.minValues = minValues;
+    this.sumBPV = sumBPV;
   }
 
   @Override
@@ -86,12 +92,23 @@ public final class BlockPackedReader extends LongValues {
     return (minValues == null ? 0 : minValues[block]) + subReaders[block].get(idx);
   }
 
-  /** Returns approximate RAM bytes used */
+  @Override
   public long ramBytesUsed() {
     long size = 0;
     for (PackedInts.Reader reader : subReaders) {
       size += reader.ramBytesUsed();
     }
     return size;
+  }
+
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.emptyList();
+  }
+  
+  @Override
+  public String toString() {
+    long avgBPV = subReaders.length == 0 ? 0 : sumBPV / subReaders.length;
+    return getClass().getSimpleName() + "(blocksize=" + (1<<blockShift) + ",size=" + valueCount + ",avgBPV=" + avgBPV + ")";
   }
 }

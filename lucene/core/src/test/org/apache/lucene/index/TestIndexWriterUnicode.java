@@ -18,6 +18,8 @@ package org.apache.lucene.index;
  */
 
 import java.io.IOException;
+import java.nio.CharBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Random;
@@ -28,7 +30,8 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.UnicodeUtil;
 
@@ -135,7 +138,7 @@ public class TestIndexWriterUnicode extends LuceneTestCase {
   private void checkTermsOrder(IndexReader r, Set<String> allTerms, boolean isTop) throws IOException {
     TermsEnum terms = MultiFields.getFields(r).terms("f").iterator(null);
 
-    BytesRef last = new BytesRef();
+    BytesRefBuilder last = new BytesRefBuilder();
 
     Set<String> seenTerms = new HashSet<>();
 
@@ -145,7 +148,7 @@ public class TestIndexWriterUnicode extends LuceneTestCase {
         break;
       }
 
-      assertTrue(last.compareTo(term) < 0);
+      assertTrue(last.get().compareTo(term) < 0);
       last.copyBytes(term);
 
       final String s = term.utf8ToString();
@@ -172,33 +175,31 @@ public class TestIndexWriterUnicode extends LuceneTestCase {
     char[] buffer = new char[20];
     char[] expected = new char[20];
 
-    BytesRef utf8 = new BytesRef(20);
-    CharsRef utf16 = new CharsRef(20);
+    CharsRefBuilder utf16 = new CharsRefBuilder();
 
     int num = atLeast(100000);
     for (int iter = 0; iter < num; iter++) {
       boolean hasIllegal = fillUnicode(buffer, expected, 0, 20);
 
-      UnicodeUtil.UTF16toUTF8(buffer, 0, 20, utf8);
+      BytesRef utf8 = new BytesRef(CharBuffer.wrap(buffer, 0, 20));
       if (!hasIllegal) {
-        byte[] b = new String(buffer, 0, 20).getBytes("UTF-8");
+        byte[] b = new String(buffer, 0, 20).getBytes(StandardCharsets.UTF_8);
         assertEquals(b.length, utf8.length);
         for(int i=0;i<b.length;i++)
           assertEquals(b[i], utf8.bytes[i]);
       }
 
-      UnicodeUtil.UTF8toUTF16(utf8.bytes, 0, utf8.length, utf16);
-      assertEquals(utf16.length, 20);
+      utf16.copyUTF8Bytes(utf8.bytes, 0, utf8.length);
+      assertEquals(utf16.length(), 20);
       for(int i=0;i<20;i++)
-        assertEquals(expected[i], utf16.chars[i]);
+        assertEquals(expected[i], utf16.charAt(i));
     }
   }
 
   // LUCENE-510
   public void testAllUnicodeChars() throws Throwable {
 
-    BytesRef utf8 = new BytesRef(10);
-    CharsRef utf16 = new CharsRef(10);
+    CharsRefBuilder utf16 = new CharsRefBuilder();
     char[] chars = new char[2];
     for(int ch=0;ch<0x0010FFFF;ch++) {
 
@@ -214,16 +215,16 @@ public class TestIndexWriterUnicode extends LuceneTestCase {
         chars[len++] = (char) (((ch-0x0010000) & 0x3FFL) + UnicodeUtil.UNI_SUR_LOW_START);
       }
 
-      UnicodeUtil.UTF16toUTF8(chars, 0, len, utf8);
+      BytesRef utf8 = new BytesRef(CharBuffer.wrap(chars, 0, len));
 
       String s1 = new String(chars, 0, len);
-      String s2 = new String(utf8.bytes, 0, utf8.length, "UTF-8");
+      String s2 = new String(utf8.bytes, 0, utf8.length, StandardCharsets.UTF_8);
       assertEquals("codepoint " + ch, s1, s2);
 
-      UnicodeUtil.UTF8toUTF16(utf8.bytes, 0, utf8.length, utf16);
-      assertEquals("codepoint " + ch, s1, new String(utf16.chars, 0, utf16.length));
+      utf16.copyUTF8Bytes(utf8.bytes, 0, utf8.length);
+      assertEquals("codepoint " + ch, s1, utf16.toString());
 
-      byte[] b = s1.getBytes("UTF-8");
+      byte[] b = s1.getBytes(StandardCharsets.UTF_8);
       assertEquals(utf8.length, b.length);
       for(int j=0;j<utf8.length;j++)
         assertEquals(utf8.bytes[j], b[j]);
@@ -232,7 +233,7 @@ public class TestIndexWriterUnicode extends LuceneTestCase {
   
   public void testEmbeddedFFFF() throws Throwable {
     Directory d = newDirectory();
-    IndexWriter w = new IndexWriter(d, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter w = new IndexWriter(d, newIndexWriterConfig(new MockAnalyzer(random())));
     Document doc = new Document();
     doc.add(newTextField("field", "a a\uffffb", Field.Store.NO));
     w.addDocument(doc);
@@ -249,7 +250,7 @@ public class TestIndexWriterUnicode extends LuceneTestCase {
   // LUCENE-510
   public void testInvalidUTF16() throws Throwable {
     Directory dir = newDirectory();
-    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new TestIndexWriter.StringSplitAnalyzer()));
+    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(new TestIndexWriter.StringSplitAnalyzer()));
     Document doc = new Document();
 
     final int count = utf8Data.length/2;

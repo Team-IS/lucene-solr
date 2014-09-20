@@ -76,7 +76,6 @@ public class DistribCursorPagingTest extends AbstractFullDistribZkTestBase {
     boolean testFinished = false;
     try {
       handle.clear();
-      handle.put("QTime", SKIPVAL);
       handle.put("timestamp", SKIPVAL);
 
       doBadInputTest();
@@ -150,7 +149,7 @@ public class DistribCursorPagingTest extends AbstractFullDistribZkTestBase {
     QueryResponse rsp = null;
 
     final String intsort = "int" + (random().nextBoolean() ? "" : "_dv");
-    final String intmissingsort = defaultCodecSupportsMissingDocValues() ? intsort : "int";
+    final String intmissingsort = intsort;
 
     // trivial base case: ensure cursorMark against an empty index doesn't blow up
     cursorMark = CURSOR_MARK_START;

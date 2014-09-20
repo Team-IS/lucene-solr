@@ -20,6 +20,7 @@ package org.apache.lucene.index;
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -59,7 +60,7 @@ public class TestPayloads extends LuceneTestCase {
     public void testPayloadFieldBit() throws Exception {
         Directory ram = newDirectory();
         PayloadAnalyzer analyzer = new PayloadAnalyzer();
-        IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig( TEST_VERSION_CURRENT, analyzer));
+        IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig(analyzer));
         Document d = new Document();
         // this field won't have any payloads
         d.add(newTextField("f1", "This field has no payloads", Field.Store.NO));
@@ -72,7 +73,7 @@ public class TestPayloads extends LuceneTestCase {
         // enabled in only some documents
         d.add(newTextField("f3", "This field has payloads in some docs", Field.Store.NO));
         // only add payload data for field f2
-        analyzer.setPayloadData("f2", "somedata".getBytes("UTF-8"), 0, 1);
+        analyzer.setPayloadData("f2", "somedata".getBytes(StandardCharsets.UTF_8), 0, 1);
         writer.addDocument(d);
         // flush
         writer.close();
@@ -87,16 +88,16 @@ public class TestPayloads extends LuceneTestCase {
         // now we add another document which has payloads for field f3 and verify if the SegmentMerger
         // enabled payloads for that field
         analyzer = new PayloadAnalyzer(); // Clear payload state for each field
-        writer = new IndexWriter(ram, newIndexWriterConfig( TEST_VERSION_CURRENT,
-            analyzer).setOpenMode(OpenMode.CREATE));
+        writer = new IndexWriter(ram, newIndexWriterConfig(analyzer)
+                                        .setOpenMode(OpenMode.CREATE));
         d = new Document();
         d.add(newTextField("f1", "This field has no payloads", Field.Store.NO));
         d.add(newTextField("f2", "This field has payloads in all docs", Field.Store.NO));
         d.add(newTextField("f2", "This field has payloads in all docs", Field.Store.NO));
         d.add(newTextField("f3", "This field has payloads in some docs", Field.Store.NO));
         // add payload data for field f2 and f3
-        analyzer.setPayloadData("f2", "somedata".getBytes("UTF-8"), 0, 1);
-        analyzer.setPayloadData("f3", "somedata".getBytes("UTF-8"), 0, 3);
+        analyzer.setPayloadData("f2", "somedata".getBytes(StandardCharsets.UTF_8), 0, 1);
+        analyzer.setPayloadData("f3", "somedata".getBytes(StandardCharsets.UTF_8), 0, 3);
         writer.addDocument(d);
 
         // force merge
@@ -124,8 +125,7 @@ public class TestPayloads extends LuceneTestCase {
     // different tests to verify the payload encoding
     private void performTest(Directory dir) throws Exception {
         PayloadAnalyzer analyzer = new PayloadAnalyzer();
-        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-            TEST_VERSION_CURRENT, analyzer)
+        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(analyzer)
             .setOpenMode(OpenMode.CREATE)
             .setMergePolicy(newLogMergePolicy()));
         
@@ -263,8 +263,8 @@ public class TestPayloads extends LuceneTestCase {
         
         // test long payload
         analyzer = new PayloadAnalyzer();
-        writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT,
-            analyzer).setOpenMode(OpenMode.CREATE));
+        writer = new IndexWriter(dir, newIndexWriterConfig(analyzer)
+                                        .setOpenMode(OpenMode.CREATE));
         String singleTerm = "lucene";
         
         d = new Document();
@@ -297,7 +297,8 @@ public class TestPayloads extends LuceneTestCase {
         
     }
     
-    static final Charset utf8 = Charset.forName("UTF-8");
+    static final Charset utf8 = StandardCharsets.UTF_8;
+    
     private void generateRandomData(byte[] data) {
       // this test needs the random data to be valid unicode
       String s = TestUtil.randomFixedByteLengthUnicodeString(random(), data.length);
@@ -450,8 +451,7 @@ public class TestPayloads extends LuceneTestCase {
         final ByteArrayPool pool = new ByteArrayPool(numThreads, 5);
         
         Directory dir = newDirectory();
-        final IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig( 
-            TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+        final IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
         final String field = "test";
         
         Thread[] ingesters = new Thread[numThreads];
@@ -582,14 +582,13 @@ public class TestPayloads extends LuceneTestCase {
   /** some docs have payload att, some not */
   public void testMixupDocs() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, null);
+    IndexWriterConfig iwc = newIndexWriterConfig(null);
     iwc.setMergePolicy(newLogMergePolicy());
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir, iwc);
     Document doc = new Document();
     Field field = new TextField("field", "", Field.Store.NO);
     TokenStream ts = new MockTokenizer(MockTokenizer.WHITESPACE, true);
     ((Tokenizer)ts).setReader(new StringReader("here we go"));
-    assertFalse(ts.hasAttribute(PayloadAttribute.class));
     field.setTokenStream(ts);
     doc.add(field);
     writer.addDocument(doc);
@@ -601,7 +600,6 @@ public class TestPayloads extends LuceneTestCase {
     writer.addDocument(doc);
     ts = new MockTokenizer(MockTokenizer.WHITESPACE, true);
     ((Tokenizer)ts).setReader(new StringReader("another"));
-    assertFalse(ts.hasAttribute(PayloadAttribute.class));
     field.setTokenStream(ts);
     writer.addDocument(doc);
     DirectoryReader reader = writer.getReader();
@@ -623,7 +621,6 @@ public class TestPayloads extends LuceneTestCase {
     Field field = new TextField("field", "", Field.Store.NO);
     TokenStream ts = new MockTokenizer(MockTokenizer.WHITESPACE, true);
     ((Tokenizer)ts).setReader(new StringReader("here we go"));
-    assertFalse(ts.hasAttribute(PayloadAttribute.class));
     field.setTokenStream(ts);
     doc.add(field);
     Field field2 = new TextField("field", "", Field.Store.NO);
@@ -636,8 +633,6 @@ public class TestPayloads extends LuceneTestCase {
     Field field3 = new TextField("field", "", Field.Store.NO);
     ts = new MockTokenizer(MockTokenizer.WHITESPACE, true);
     ((Tokenizer)ts).setReader(new StringReader("nopayload"));
-
-    assertFalse(ts.hasAttribute(PayloadAttribute.class));
     field3.setTokenStream(ts);
     doc.add(field3);
     writer.addDocument(doc);

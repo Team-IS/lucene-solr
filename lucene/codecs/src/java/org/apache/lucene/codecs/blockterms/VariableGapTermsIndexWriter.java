@@ -29,8 +29,10 @@ import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.IntsRefBuilder;
 import org.apache.lucene.util.fst.Builder;
 import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.PositiveIntOutputs;
@@ -45,7 +47,7 @@ import org.apache.lucene.util.fst.Util;
  *
  * @lucene.experimental */
 public class VariableGapTermsIndexWriter extends TermsIndexWriterBase {
-  protected final IndexOutput out;
+  protected IndexOutput out;
 
   /** Extension of terms index file */
   static final String TERMS_INDEX_EXTENSION = "tiv";
@@ -53,7 +55,8 @@ public class VariableGapTermsIndexWriter extends TermsIndexWriterBase {
   final static String CODEC_NAME = "VARIABLE_GAP_TERMS_INDEX";
   final static int VERSION_START = 0;
   final static int VERSION_APPEND_ONLY = 1;
-  final static int VERSION_CURRENT = VERSION_APPEND_ONLY;
+  final static int VERSION_CHECKSUM = 2;
+  final static int VERSION_CURRENT = VERSION_CHECKSUM;
 
   private final List<FSTFieldWriter> fields = new ArrayList<>();
   
@@ -230,7 +233,7 @@ public class VariableGapTermsIndexWriter extends TermsIndexWriterBase {
     FST<Long> fst;
     final long indexStart;
 
-    private final BytesRef lastTerm = new BytesRef();
+    private final BytesRefBuilder lastTerm = new BytesRefBuilder();
     private boolean first = true;
 
     public FSTFieldWriter(FieldInfo fieldInfo, long termsFilePointer) throws IOException {
@@ -260,7 +263,7 @@ public class VariableGapTermsIndexWriter extends TermsIndexWriterBase {
       }
     }
 
-    private final IntsRef scratchIntsRef = new IntsRef();
+    private final IntsRefBuilder scratchIntsRef = new IntsRefBuilder();
 
     @Override
     public void add(BytesRef text, TermStats stats, long termsFilePointer) throws IOException {
@@ -270,7 +273,7 @@ public class VariableGapTermsIndexWriter extends TermsIndexWriterBase {
         return;
       }
       final int lengthSave = text.length;
-      text.length = indexedTermPrefixLength(lastTerm, text);
+      text.length = indexedTermPrefixLength(lastTerm.get(), text);
       try {
         fstBuilder.add(Util.toIntsRef(text, scratchIntsRef), termsFilePointer);
       } finally {
@@ -290,30 +293,34 @@ public class VariableGapTermsIndexWriter extends TermsIndexWriterBase {
 
   @Override
   public void close() throws IOException {
-    try {
-    final long dirStart = out.getFilePointer();
-    final int fieldCount = fields.size();
-
-    int nonNullFieldCount = 0;
-    for(int i=0;i<fieldCount;i++) {
-      FSTFieldWriter field = fields.get(i);
-      if (field.fst != null) {
-        nonNullFieldCount++;
+    if (out != null) {
+      try {
+        final long dirStart = out.getFilePointer();
+        final int fieldCount = fields.size();
+        
+        int nonNullFieldCount = 0;
+        for(int i=0;i<fieldCount;i++) {
+          FSTFieldWriter field = fields.get(i);
+          if (field.fst != null) {
+            nonNullFieldCount++;
+          }
+        }
+        
+        out.writeVInt(nonNullFieldCount);
+        for(int i=0;i<fieldCount;i++) {
+          FSTFieldWriter field = fields.get(i);
+          if (field.fst != null) {
+            out.writeVInt(field.fieldInfo.number);
+            out.writeVLong(field.indexStart);
+          }
+        }
+        writeTrailer(dirStart);
+        CodecUtil.writeFooter(out);
+      } finally {
+        out.close();
+        out = null;
       }
     }
-
-    out.writeVInt(nonNullFieldCount);
-    for(int i=0;i<fieldCount;i++) {
-      FSTFieldWriter field = fields.get(i);
-      if (field.fst != null) {
-        out.writeVInt(field.fieldInfo.number);
-        out.writeVLong(field.indexStart);
-      }
-    }
-    writeTrailer(dirStart);
-    } finally {
-    out.close();
-  }
   }
 
   private void writeTrailer(long dirStart) throws IOException {

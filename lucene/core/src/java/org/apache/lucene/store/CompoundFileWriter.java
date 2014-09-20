@@ -54,7 +54,8 @@ final class CompoundFileWriter implements Closeable{
   // versioning for the .cfs file
   static final String DATA_CODEC = "CompoundFileWriterData";
   static final int VERSION_START = 0;
-  static final int VERSION_CURRENT = VERSION_START;
+  static final int VERSION_CHECKSUM = 1;
+  static final int VERSION_CURRENT = VERSION_CHECKSUM;
 
   // versioning for the .cfe file
   static final String ENTRY_CODEC = "CompoundFileWriterEntries";
@@ -90,11 +91,11 @@ final class CompoundFileWriter implements Closeable{
     
   }
   
-  private synchronized IndexOutput getOutput() throws IOException {
+  private synchronized IndexOutput getOutput(IOContext context) throws IOException {
     if (dataOut == null) {
       boolean success = false;
       try {
-        dataOut = directory.createOutput(dataFileName, IOContext.DEFAULT);
+        dataOut = directory.createOutput(dataFileName, context);
         CodecUtil.writeHeader(dataOut, DATA_CODEC, VERSION_CURRENT);
         success = true;
       } finally {
@@ -128,30 +129,40 @@ final class CompoundFileWriter implements Closeable{
     if (closed) {
       return;
     }
-    IOException priorException = null;
     IndexOutput entryTableOut = null;
     // TODO this code should clean up after itself
     // (remove partial .cfs/.cfe)
+    boolean success = false;
     try {
       if (!pendingEntries.isEmpty() || outputTaken.get()) {
         throw new IllegalStateException("CFS has pending open files");
       }
       closed = true;
-      // open the compound stream
-      getOutput();
+      // open the compound stream; we can safely use IOContext.DEFAULT
+      // here because this will only open the output if no file was
+      // added to the CFS
+      getOutput(IOContext.DEFAULT);
       assert dataOut != null;
-    } catch (IOException e) {
-      priorException = e;
+      CodecUtil.writeFooter(dataOut);
+      success = true;
     } finally {
-      IOUtils.closeWhileHandlingException(priorException, dataOut);
+      if (success) {
+        IOUtils.close(dataOut);
+      } else {
+        IOUtils.closeWhileHandlingException(dataOut);
+      }
     }
+    success = false;
     try {
       entryTableOut = directory.createOutput(entryTableName, IOContext.DEFAULT);
       writeEntryTable(entries.values(), entryTableOut);
-    } catch (IOException e) {
-      priorException = e;
+      success = true;
     } finally {
-      IOUtils.closeWhileHandlingException(priorException, entryTableOut);
+      if (success) {
+        IOUtils.close(entryTableOut);
+      } else {
+        IOUtils.closeWhileHandlingException(entryTableOut);
+      }
     }
   }
 
@@ -186,7 +197,8 @@ final class CompoundFileWriter implements Closeable{
       if (success) {
         IOUtils.close(is);
         // copy successful - delete file
-        fileEntry.dir.deleteFile(fileEntry.file);
+        // if we can't we rely on IFD to pick up and retry
+        IOUtils.deleteFilesIgnoringExceptions(fileEntry.dir, fileEntry.file);
       } else {
         IOUtils.closeWhileHandlingException(is);
       }
@@ -202,6 +214,7 @@ final class CompoundFileWriter implements Closeable{
       entryOut.writeLong(fe.offset);
       entryOut.writeLong(fe.length);
     }
+    CodecUtil.writeFooter(entryOut);
   }
 
   IndexOutput createOutput(String name, IOContext context) throws IOException {
@@ -222,12 +235,9 @@ final class CompoundFileWriter implements Closeable{
       final DirectCFSIndexOutput out;
 
       if ((outputLocked = outputTaken.compareAndSet(false, true))) {
-        out = new DirectCFSIndexOutput(getOutput(), entry, false);
+        out = new DirectCFSIndexOutput(getOutput(context), entry, false);
       } else {
         entry.dir = this.directory;
-        if (directory.fileExists(name)) {
-          throw new IllegalArgumentException("File " + name + " already exists");
-        }
         out = new DirectCFSIndexOutput(directory.createOutput(name, context), entry,
             true);
       }
@@ -254,7 +264,7 @@ final class CompoundFileWriter implements Closeable{
       try {
         while (!pendingEntries.isEmpty()) {
           FileEntry entry = pendingEntries.poll();
-          copyFileEntry(getOutput(), entry);
+          copyFileEntry(getOutput(new IOContext(new FlushInfo(0, entry.length))), entry);
           entries.put(entry.file, entry);
         }
       } finally {
@@ -299,11 +309,6 @@ final class CompoundFileWriter implements Closeable{
     }
 
     @Override
-    public void flush() throws IOException {
-      delegate.flush();
-    }
-
-    @Override
     public void close() throws IOException {
       if (!closed) {
         closed = true;
@@ -327,12 +332,6 @@ final class CompoundFileWriter implements Closeable{
     }
 
     @Override
-    public long length() throws IOException {
-      assert !closed;
-      return delegate.length() - offset;
-    }
-
-    @Override
     public void writeByte(byte b) throws IOException {
       assert !closed;
       writtenBytes++;
@@ -344,6 +343,11 @@ final class CompoundFileWriter implements Closeable{
       assert !closed;
       writtenBytes += length;
       delegate.writeBytes(b, offset, length);
+    }
+
+    @Override
+    public long getChecksum() throws IOException {
+      return delegate.getChecksum();
     }
   }
 

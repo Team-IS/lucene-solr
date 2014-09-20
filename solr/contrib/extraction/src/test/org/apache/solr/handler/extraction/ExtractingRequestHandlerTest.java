@@ -23,9 +23,6 @@ import org.apache.solr.common.SolrException;
 import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.ContentStreamBase;
 import org.apache.solr.common.util.NamedList;
-import org.apache.solr.handler.extraction.ExtractingDocumentLoader;
-import org.apache.solr.handler.extraction.ExtractingParams;
-import org.apache.solr.handler.extraction.ExtractingRequestHandler;
 import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
@@ -267,6 +264,7 @@ public class ExtractingRequestHandlerTest extends SolrTestCaseJ4 {
               "fmap.language", "extractedLanguage",
               "literal.extractionLiteral", "one",
               "literal.extractionLiteral", "two",
+              "fmap.X-Parsed-By", "ignored_parser",
               "fmap.Last-Modified", "extractedDate"
       );
       // TODO: original author did not specify why an exception should be thrown... how to fix?
@@ -282,6 +280,7 @@ public class ExtractingRequestHandlerTest extends SolrTestCaseJ4 {
             "literal.id", "three",
             "fmap.language", "extractedLanguage",
             "literal.extractionLiteral", "one",
+            "fmap.X-Parsed-By", "ignored_parser",
             "fmap.Last-Modified", "extractedDate"
     );
     assertU(commit());
@@ -300,6 +299,7 @@ public class ExtractingRequestHandlerTest extends SolrTestCaseJ4 {
             "fmap.Author", "extractedAuthor",
             "literal.id", "one",
             "fmap.language", "extractedLanguage",
+            "fmap.X-Parsed-By", "ignored_parser",
             "fmap.content", "extractedContent",
             ExtractingParams.STREAM_TYPE, "text/plain"
     );
@@ -319,6 +319,7 @@ public class ExtractingRequestHandlerTest extends SolrTestCaseJ4 {
             "fmap.Author", "extractedAuthor",
             "literal.id", "one",
             "fmap.language", "extractedLanguage",
+            "fmap.X-Parsed-By", "ignored_parser",
             "fmap.content", "extractedContent",
             ExtractingParams.RESOURCE_NAME, "extraction/version_control.txt"
     );
@@ -546,7 +547,7 @@ public class ExtractingRequestHandlerTest extends SolrTestCaseJ4 {
   @Test
   public void testPasswordProtected() throws Exception {
     // PDF, Passwords from resource.password
-    loadLocal("extraction/enctypted-password-is-solrRules.pdf", 
+    loadLocal("extraction/encrypted-password-is-solrRules.pdf",
         "fmap.created", "extractedDate", 
         "fmap.producer", "extractedProducer",
         "fmap.creator", "extractedCreator", 
@@ -556,12 +557,12 @@ public class ExtractingRequestHandlerTest extends SolrTestCaseJ4 {
         "fmap.Author", "extractedAuthor",
         "fmap.content", "wdf_nocase",
         "literal.id", "pdfpwliteral",
-        "resource.name", "enctypted-password-is-solrRules.pdf",
+        "resource.name", "encrypted-password-is-solrRules.pdf",
         "resource.password", "solrRules",
         "fmap.Last-Modified", "extractedDate");
 
     // PDF, Passwords from passwords property file
-    loadLocal("extraction/enctypted-password-is-solrRules.pdf", 
+    loadLocal("extraction/encrypted-password-is-solrRules.pdf",
         "fmap.created", "extractedDate", 
         "fmap.producer", "extractedProducer",
         "fmap.creator", "extractedCreator", 
@@ -571,7 +572,7 @@ public class ExtractingRequestHandlerTest extends SolrTestCaseJ4 {
         "fmap.Author", "extractedAuthor",
         "fmap.content", "wdf_nocase",
         "literal.id", "pdfpwfile",
-        "resource.name", "enctypted-password-is-solrRules.pdf",
+        "resource.name", "encrypted-password-is-solrRules.pdf",
         "passwordsFile", "passwordRegex.properties", // Passwords-file
         "fmap.Last-Modified", "extractedDate");
 

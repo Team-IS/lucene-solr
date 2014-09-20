@@ -22,7 +22,7 @@ import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.queries.function.docvalues.FloatDocValues;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.handler.RequestHandlerBase;
 import org.apache.solr.handler.RequestHandlerUtils;
@@ -39,6 +39,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
@@ -252,7 +253,7 @@ public class FileFloatSource extends ValueSource {
       return vals;
     }
 
-    BufferedReader r = new BufferedReader(new InputStreamReader(is, IOUtils.CHARSET_UTF_8));
+    BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
 
     String idName = ffs.keyField.getName();
     FieldType idType = ffs.keyField.getType();
@@ -267,7 +268,7 @@ public class FileFloatSource extends ValueSource {
 
     char delimiter='=';
 
-    BytesRef internalKey = new BytesRef();
+    BytesRefBuilder internalKey = new BytesRefBuilder();
 
     try {
       TermsEnum termsEnum = MultiFields.getTerms(reader, idName).iterator(null);
@@ -297,7 +298,7 @@ public class FileFloatSource extends ValueSource {
           continue;  // go to next line in file.. leave values as default.
         }
 
-        if (!termsEnum.seekExact(internalKey)) {
+        if (!termsEnum.seekExact(internalKey.get())) {
           if (notFoundCount<10) {  // collect first 10 not found for logging
             notFound.add(key);
           }
@@ -351,11 +352,6 @@ public class FileFloatSource extends ValueSource {
     @Override
     public String getDescription() {
       return "Reload readerCache request handler";
-    }
-
-    @Override
-    public String getSource() {
-      return "$URL$";
     }
   }
 }

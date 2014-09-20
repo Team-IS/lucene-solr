@@ -6,13 +6,10 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.text.SimpleDateFormat;
-import java.util.Calendar;
 import java.util.Date;
-import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.TimeZone;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -46,21 +43,10 @@ public class TestSimplePropertiesWriter extends AbstractDIHJdbcTestCase {
   
   @Before
   public void spwBefore() throws Exception {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    fileLocation = tmpdir.getPath();
+    fileLocation = createTempDir().toFile().getAbsolutePath();
     fileName = "the.properties";
   }
-  @After
-  public void spwAfter() throws Exception {
-    //If an Assume was tripped while setting up the test, 
-    //the file might not ever have been created...
-    if(fileLocation!=null) {
-      new File(fileLocation + File.separatorChar + fileName).delete();
-      new File(fileLocation).delete();
-    }
-  }  
+ 
   @Test
   public void testSimplePropertiesWriter() throws Exception { 
     
@@ -145,7 +131,7 @@ public class TestSimplePropertiesWriter extends AbstractDIHJdbcTestCase {
     String q = useJdbcEscapeSyntax ? "" : "'";
     sb.append("<dataConfig> \n");
     sb.append("<propertyWriter dateFormat=\"" + dateFormat + "\" type=\"SimplePropertiesWriter\" directory=\"" + fileLocation + "\" filename=\"" + fileName + "\" />\n");
-    sb.append("<dataSource name=\"derby\" driver=\"org.apache.derby.jdbc.EmbeddedDriver\" url=\"jdbc:derby:memory:derbyDB;\" /> \n");
+    sb.append("<dataSource name=\"derby\" driver=\"org.apache.derby.jdbc.EmbeddedDriver\" url=\"jdbc:derby:memory:derbyDB;territory=en_US\" /> \n");
     sb.append("<document name=\"TestSimplePropertiesWriter\"> \n");
     sb.append("<entity name=\"SomeDates\" processor=\"SqlEntityProcessor\" dataSource=\"derby\" ");
     sb.append("query=\"select 1 as id, YEAR(" + q + "${dih.last_index_time}" + q + ") as AYEAR_S from sysibm.sysdummy1 \" >\n");

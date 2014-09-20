@@ -49,11 +49,6 @@ public class FilterDirectory extends Directory {
   }
 
   @Override
-  public boolean fileExists(String name) throws IOException {
-    return in.fileExists(name);
-  }
-
-  @Override
   public void deleteFile(String name) throws IOException {
     in.deleteFile(name);
   }
@@ -72,6 +67,11 @@ public class FilterDirectory extends Directory {
   @Override
   public void sync(Collection<String> names) throws IOException {
     in.sync(names);
+  }
+
+  @Override
+  public void renameFile(String source, String dest) throws IOException {
+    in.renameFile(source, dest);
   }
 
   @Override

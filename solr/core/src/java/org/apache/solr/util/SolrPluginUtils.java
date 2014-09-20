@@ -48,6 +48,7 @@ import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.common.util.StrUtils;
+import org.apache.solr.core.InitParams;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.handler.component.HighlightComponent;
 import org.apache.solr.handler.component.ResponseBuilder;
@@ -124,6 +125,17 @@ public class SolrPluginUtils {
    */
   public static void setDefaults(SolrQueryRequest req, SolrParams defaults,
                                  SolrParams appends, SolrParams invariants) {
+      String useParams = req.getParams().get("useParam");
+      if(useParams !=null){
+        for (String name : StrUtils.splitSmart(useParams,',')) {
+          InitParams initParams = req.getCore().getSolrConfig().getInitParams().get(name);
+          if(initParams !=null){
+            if(initParams.defaults != null) defaults = SolrParams.wrapDefaults(SolrParams.toSolrParams(initParams.defaults) , defaults);
+            if(initParams.invariants != null) invariants = SolrParams.wrapDefaults(invariants, SolrParams.toSolrParams(initParams.invariants));
+            if(initParams.appends != null)  appends = SolrParams.wrapAppended(appends, SolrParams.toSolrParams(initParams.appends));
+          }
+        }
+      }
 
       SolrParams p = req.getParams();
       p = SolrParams.wrapDefaults(p, defaults);
@@ -702,21 +714,25 @@ public class SolrPluginUtils {
     }
     return s.toString().replace("\"","");
   }
-
-  public static NamedList removeNulls(NamedList nl) {
-    for (int i=0; i<nl.size(); i++) {
-      if (nl.getName(i)==null) {
-        NamedList newList = nl instanceof SimpleOrderedMap ? new SimpleOrderedMap() : new NamedList();
-        for (int j=0; j<nl.size(); j++) {
-          String n = nl.getName(j);
-          if (n != null) {
-            newList.add(n, nl.getVal(j));
-          }
+  
+  /**
+   * Adds to {@code dest} all the not-null elements of {@code entries} that have non-null names
+   * 
+   * @param entries The array of entries to be added to the {@link NamedList} {@code dest}
+   * @param dest The {@link NamedList} instance where the not-null elements of entries are added
+   * @return Returns The {@code dest} input object
+   */
+  public static <T> NamedList<T> removeNulls(Map.Entry<String, T>[] entries, NamedList<T> dest) {
+    for (int i=0; i<entries.length; i++) {
+      Map.Entry<String, T> entry = entries[i];
+      if (entry != null) {
+        String key = entry.getKey();
+        if (key != null) {
+          dest.add(key, entry.getValue());
         }
-        return newList;
       }
     }
-    return nl;
+    return dest;
   }
 
   /**

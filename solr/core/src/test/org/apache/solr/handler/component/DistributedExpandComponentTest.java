@@ -70,7 +70,6 @@ public class DistributedExpandComponentTest extends BaseDistributedSearchTestCas
 
 
     handle.put("explain", SKIPVAL);
-    handle.put("QTime", SKIPVAL);
     handle.put("timestamp", SKIPVAL);
     handle.put("score", SKIPVAL);
     handle.put("wt", SKIP);
@@ -88,6 +87,9 @@ public class DistributedExpandComponentTest extends BaseDistributedSearchTestCas
     query("q", "test_ti:5", "fq", "{!collapse field=group_s}", "defType", "edismax", "bf", "field(test_ti)", "expand", "true", "expand.sort", "test_tl desc", "expand.rows", "1", "fl","*,score");
     //Test zero results
     query("q", "test_ti:5434343", "fq", "{!collapse field=group_s}", "defType", "edismax", "bf", "field(test_ti)", "expand", "true", "expand.sort", "test_tl desc", "expand.rows", "1", "fl","*,score");
+    //Test page 2
+    query("q", "*:*", "start","1", "rows", "1", "fq", "{!collapse field=group_s}", "defType", "edismax", "bf", "field(test_ti)", "expand", "true", "fl","*,score");
+
 
     //First basic test case.
     ModifiableSolrParams params = new ModifiableSolrParams();

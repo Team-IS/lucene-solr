@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.TreeMap;
 
 import org.apache.lucene.index.CorruptIndexException;
@@ -38,12 +39,16 @@ import org.apache.lucene.index.TermState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.ByteArrayDataInput;
+import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.automaton.ByteRunAutomaton;
 import org.apache.lucene.util.automaton.CompiledAutomaton;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.fst.BytesRefFSTEnum;
@@ -56,14 +61,13 @@ import org.apache.lucene.codecs.BlockTermState;
 import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.PostingsReaderBase;
 import org.apache.lucene.codecs.CodecUtil;
-import org.apache.lucene.codecs.memory.FSTTermsReader.TermsReader;
 
 /** 
  * FST-based terms dictionary reader.
  *
  * The FST index maps each term and its ord, and during seek 
  * the ord is used fetch metadata from a single block.
- * The term dictionary is fully memeory resident.
+ * The term dictionary is fully memory resident.
  *
  * @lucene.experimental
  */
@@ -71,8 +75,7 @@ public class FSTOrdTermsReader extends FieldsProducer {
   static final int INTERVAL = FSTOrdTermsWriter.SKIP_INTERVAL;
   final TreeMap<String, TermsReader> fields = new TreeMap<>();
   final PostingsReaderBase postingsReader;
-  IndexInput indexIn = null;
-  IndexInput blockIn = null;
+  int version;
   //static final boolean TEST = false;
 
   public FSTOrdTermsReader(SegmentReadState state, PostingsReaderBase postingsReader) throws IOException {
@@ -80,11 +83,18 @@ public class FSTOrdTermsReader extends FieldsProducer {
     final String termsBlockFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, FSTOrdTermsWriter.TERMS_BLOCK_EXTENSION);
 
     this.postingsReader = postingsReader;
+    ChecksumIndexInput indexIn = null;
+    IndexInput blockIn = null;
+    boolean success = false;
     try {
-      this.indexIn = state.directory.openInput(termsIndexFileName, state.context);
-      this.blockIn = state.directory.openInput(termsBlockFileName, state.context);
-      readHeader(indexIn);
+      indexIn = state.directory.openChecksumInput(termsIndexFileName, state.context);
+      blockIn = state.directory.openInput(termsBlockFileName, state.context);
+      version = readHeader(indexIn);
       readHeader(blockIn);
+      if (version >= FSTOrdTermsWriter.TERMS_VERSION_CHECKSUM) {
+        CodecUtil.checksumEntireFile(blockIn);
+      }
+      
       this.postingsReader.init(blockIn);
       seekDir(blockIn);
 
@@ -100,12 +110,22 @@ public class FSTOrdTermsReader extends FieldsProducer {
         int longsSize = blockIn.readVInt();
         FST<Long> index = new FST<>(indexIn, PositiveIntOutputs.getSingleton());
 
-        TermsReader current = new TermsReader(fieldInfo, numTerms, sumTotalTermFreq, sumDocFreq, docCount, longsSize, index);
+        TermsReader current = new TermsReader(fieldInfo, blockIn, numTerms, sumTotalTermFreq, sumDocFreq, docCount, longsSize, index);
         TermsReader previous = fields.put(fieldInfo.name, current);
-        checkFieldSummary(state.segmentInfo, current, previous);
+        checkFieldSummary(state.segmentInfo, indexIn, blockIn, current, previous);
       }
+      if (version >= FSTOrdTermsWriter.TERMS_VERSION_CHECKSUM) {
+        CodecUtil.checkFooter(indexIn);
+      } else {
+        CodecUtil.checkEOF(indexIn);
+      }
+      success = true;
     } finally {
-      IOUtils.closeWhileHandlingException(indexIn, blockIn);
+      if (success) {
+        IOUtils.close(indexIn, blockIn);
+      } else {
+        IOUtils.closeWhileHandlingException(indexIn, blockIn);
+      }
     }
   }
 
@@ -115,24 +135,28 @@ public class FSTOrdTermsReader extends FieldsProducer {
                                      FSTOrdTermsWriter.TERMS_VERSION_CURRENT);
   }
   private void seekDir(IndexInput in) throws IOException {
-    in.seek(in.length() - 8);
+    if (version >= FSTOrdTermsWriter.TERMS_VERSION_CHECKSUM) {
+      in.seek(in.length() - CodecUtil.footerLength() - 8);
+    } else {
+      in.seek(in.length() - 8);
+    }
     in.seek(in.readLong());
   }
-  private void checkFieldSummary(SegmentInfo info, TermsReader field, TermsReader previous) throws IOException {
+  private void checkFieldSummary(SegmentInfo info, IndexInput indexIn, IndexInput blockIn, TermsReader field, TermsReader previous) throws IOException {
     // #docs with field must be <= #docs
     if (field.docCount < 0 || field.docCount > info.getDocCount()) {
-      throw new CorruptIndexException("invalid docCount: " + field.docCount + " maxDoc: " + info.getDocCount() + " (resource=" + indexIn + ", " + blockIn + ")");
+      throw new CorruptIndexException("invalid docCount: " + field.docCount + " maxDoc: " + info.getDocCount() + " (blockIn=" + blockIn + ")", indexIn);
     }
     // #postings must be >= #docs with field
     if (field.sumDocFreq < field.docCount) {
-      throw new CorruptIndexException("invalid sumDocFreq: " + field.sumDocFreq + " docCount: " + field.docCount + " (resource=" + indexIn + ", " + blockIn + ")");
+      throw new CorruptIndexException("invalid sumDocFreq: " + field.sumDocFreq + " docCount: " + field.docCount + " (blockIn=" + blockIn + ")", indexIn);
     }
     // #positions must be >= #postings
     if (field.sumTotalTermFreq != -1 && field.sumTotalTermFreq < field.sumDocFreq) {
-      throw new CorruptIndexException("invalid sumTotalTermFreq: " + field.sumTotalTermFreq + " sumDocFreq: " + field.sumDocFreq + " (resource=" + indexIn + ", " + blockIn + ")");
+      throw new CorruptIndexException("invalid sumTotalTermFreq: " + field.sumTotalTermFreq + " sumDocFreq: " + field.sumDocFreq + " (blockIn=" + blockIn + ")", indexIn);
     }
     if (previous != null) {
-      throw new CorruptIndexException("duplicate fields: " + field.fieldInfo.name + " (resource=" + indexIn + ", " + blockIn + ")");
+      throw new CorruptIndexException("duplicate fields: " + field.fieldInfo.name + " (blockIn=" + blockIn + ")", indexIn);
     }
   }
 
@@ -161,7 +185,7 @@ public class FSTOrdTermsReader extends FieldsProducer {
     }
   }
 
-  final class TermsReader extends Terms {
+  final class TermsReader extends Terms implements Accountable {
     final FieldInfo fieldInfo;
     final long numTerms;
     final long sumTotalTermFreq;
@@ -176,7 +200,7 @@ public class FSTOrdTermsReader extends FieldsProducer {
     final byte[] metaLongsBlock;
     final byte[] metaBytesBlock;
 
-    TermsReader(FieldInfo fieldInfo, long numTerms, long sumTotalTermFreq, long sumDocFreq, int docCount, int longsSize, FST<Long> index) throws IOException {
+    TermsReader(FieldInfo fieldInfo, IndexInput blockIn, long numTerms, long sumTotalTermFreq, long sumDocFreq, int docCount, int longsSize, FST<Long> index) throws IOException {
       this.fieldInfo = fieldInfo;
       this.numTerms = numTerms;
       this.sumTotalTermFreq = sumTotalTermFreq;
@@ -255,10 +279,35 @@ public class FSTOrdTermsReader extends FieldsProducer {
       return new IntersectTermsEnum(compiled, startTerm);
     }
 
+    @Override
+    public long ramBytesUsed() {
+      long ramBytesUsed = 0;
+      if (index != null) {
+        ramBytesUsed += index.ramBytesUsed();
+        ramBytesUsed += RamUsageEstimator.sizeOf(metaBytesBlock);
+        ramBytesUsed += RamUsageEstimator.sizeOf(metaLongsBlock);
+        ramBytesUsed += RamUsageEstimator.sizeOf(skipInfo);
+        ramBytesUsed += RamUsageEstimator.sizeOf(statsBlock);
+      }
+      return ramBytesUsed;
+    }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      if (index == null) {
+        return Collections.emptyList();
+      } else {
+        return Collections.singletonList(Accountables.namedAccountable("terms", index));
+      }
+    }
+    
+    @Override
+    public String toString() {
+      return "FSTOrdTerms(terms=" + numTerms + ",postings=" + sumDocFreq + ",positions=" + sumTotalTermFreq + ",docs=" + docCount + ")";
+    }
+
     // Only wraps common operations for PBF interact
     abstract class BaseTermsEnum extends TermsEnum {
-      /* Current term, null when enum ends or unpositioned */
-      BytesRef term;
 
       /* Current term's ord, starts from 0 */
       long ord;
@@ -286,7 +335,6 @@ public class FSTOrdTermsReader extends FieldsProducer {
 
       BaseTermsEnum() throws IOException {
         this.state = postingsReader.newTermState();
-        this.term = null;
         this.statsReader.reset(statsBlock);
         this.metaLongsReader.reset(metaLongsBlock);
         this.metaBytesReader.reset(metaBytesBlock);
@@ -374,11 +422,6 @@ public class FSTOrdTermsReader extends FieldsProducer {
       }
 
       @Override
-      public BytesRef term() {
-        return term;
-      }
-
-      @Override
       public int docFreq() throws IOException {
         return state.docFreq;
       }
@@ -419,6 +462,8 @@ public class FSTOrdTermsReader extends FieldsProducer {
     // Iterates through all terms in this field
     private final class SegmentTermsEnum extends BaseTermsEnum {
       final BytesRefFSTEnum<Long> fstEnum;
+      /* Current term, null when enum ends or unpositioned */
+      BytesRef term;
 
       /* True when current term's metadata is decoded */
       boolean decoded;
@@ -430,6 +475,11 @@ public class FSTOrdTermsReader extends FieldsProducer {
         this.fstEnum = new BytesRefFSTEnum<>(index);
         this.decoded = false;
         this.seekPending = false;
+      }
+
+      @Override
+      public BytesRef term() throws IOException {
+        return term;
       }
 
       @Override
@@ -492,6 +542,9 @@ public class FSTOrdTermsReader extends FieldsProducer {
 
     // Iterates intersect result with automaton (cannot seek!)
     private final class IntersectTermsEnum extends BaseTermsEnum {
+      /* Current term, null when enum ends or unpositioned */
+      BytesRefBuilder term;
+
       /* True when current term's metadata is decoded */
       boolean decoded;
 
@@ -555,8 +608,13 @@ public class FSTOrdTermsReader extends FieldsProducer {
           pending = isAccept(topFrame());
         } else {
           doSeekCeil(startTerm);
-          pending = !startTerm.equals(term) && isValid(topFrame()) && isAccept(topFrame());
+          pending = (term == null || !startTerm.equals(term.get())) && isValid(topFrame()) && isAccept(topFrame());
         }
+      }
+
+      @Override
+      public BytesRef term() throws IOException {
+        return term == null ? null : term.get();
       }
 
       @Override
@@ -586,7 +644,7 @@ public class FSTOrdTermsReader extends FieldsProducer {
         if (pending) {
           pending = false;
           decodeStats();
-          return term;
+          return term();
         }
         decoded = false;
       DFS:
@@ -613,7 +671,7 @@ public class FSTOrdTermsReader extends FieldsProducer {
           return null;
         }
         decodeStats();
-        return term;
+        return term();
       }
 
       BytesRef doSeekCeil(BytesRef target) throws IOException {
@@ -632,11 +690,11 @@ public class FSTOrdTermsReader extends FieldsProducer {
           upto++;
         }
         if (upto == limit) {  // got target
-          return term;
+          return term();
         }
         if (frame != null) {  // got larger term('s prefix)
           pushFrame(frame);
-          return isAccept(frame) ? term : next();
+          return isAccept(frame) ? term() : next();
         }
         while (level > 0) {   // got target's prefix, advance to larger term
           frame = popFrame();
@@ -645,7 +703,7 @@ public class FSTOrdTermsReader extends FieldsProducer {
           }
           if (loadNextFrame(topFrame(), frame) != null) {
             pushFrame(frame);
-            return isAccept(frame) ? term : next();
+            return isAccept(frame) ? term() : next();
           }
         }
         return null;
@@ -757,23 +815,20 @@ public class FSTOrdTermsReader extends FieldsProducer {
         return stack[level];
       }
 
-      BytesRef grow(int label) {
+      BytesRefBuilder grow(int label) {
         if (term == null) {
-          term = new BytesRef(new byte[16], 0, 0);
+          term = new BytesRefBuilder();
         } else {
-          if (term.length == term.bytes.length) {
-            term.grow(term.length+1);
-          }
-          term.bytes[term.length++] = (byte)label;
+          term.append((byte) label);
         }
         return term;
       }
 
-      BytesRef shrink() {
-        if (term.length == 0) {
+      BytesRefBuilder shrink() {
+        if (term.length() == 0) {
           term = null;
         } else {
-          term.length--;
+          term.setLength(term.length() - 1);
         }
         return term;
       }
@@ -807,16 +862,28 @@ public class FSTOrdTermsReader extends FieldsProducer {
   
   @Override
   public long ramBytesUsed() {
-    long ramBytesUsed = 0;
+    long ramBytesUsed = postingsReader.ramBytesUsed();
     for (TermsReader r : fields.values()) {
-      if (r.index != null) {
-        ramBytesUsed += r.index.sizeInBytes();
-        ramBytesUsed += RamUsageEstimator.sizeOf(r.metaBytesBlock);
-        ramBytesUsed += RamUsageEstimator.sizeOf(r.metaLongsBlock);
-        ramBytesUsed += RamUsageEstimator.sizeOf(r.skipInfo);
-        ramBytesUsed += RamUsageEstimator.sizeOf(r.statsBlock);
-      }
+      ramBytesUsed += r.ramBytesUsed();
     }
     return ramBytesUsed;
+  }
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    List<Accountable> resources = new ArrayList<>();
+    resources.addAll(Accountables.namedAccountables("field", fields));
+    resources.add(Accountables.namedAccountable("delegate", postingsReader));
+    return Collections.unmodifiableList(resources);
+  }
+  
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(fields=" + fields.size() + ",delegate=" + postingsReader + ")";
+  }
+
+  @Override
+  public void checkIntegrity() throws IOException {
+    postingsReader.checkIntegrity();
   }
 }

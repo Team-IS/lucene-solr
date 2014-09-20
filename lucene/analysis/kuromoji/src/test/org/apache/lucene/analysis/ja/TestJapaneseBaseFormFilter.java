@@ -18,7 +18,6 @@ package org.apache.lucene.analysis.ja;
  */
 
 import java.io.IOException;
-import java.io.Reader;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.BaseTokenStreamTestCase;
@@ -32,7 +31,7 @@ public class TestJapaneseBaseFormFilter extends BaseTokenStreamTestCase {
   private Analyzer analyzer = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      Tokenizer tokenizer = new JapaneseTokenizer(null, true, JapaneseTokenizer.DEFAULT_MODE);
+      Tokenizer tokenizer = new JapaneseTokenizer(newAttributeFactory(), null, true, JapaneseTokenizer.DEFAULT_MODE);
       return new TokenStreamComponents(tokenizer, new JapaneseBaseFormFilter(tokenizer));
     }
   };
@@ -44,11 +43,11 @@ public class TestJapaneseBaseFormFilter extends BaseTokenStreamTestCase {
   }
   
   public void testKeyword() throws IOException {
-    final CharArraySet exclusionSet = new CharArraySet(TEST_VERSION_CURRENT, asSet("あり"), false);
+    final CharArraySet exclusionSet = new CharArraySet(asSet("あり"), false);
     Analyzer a = new Analyzer() {
       @Override
       protected TokenStreamComponents createComponents(String fieldName) {
-        Tokenizer source = new JapaneseTokenizer(null, true, JapaneseTokenizer.DEFAULT_MODE);
+        Tokenizer source = new JapaneseTokenizer(newAttributeFactory(), null, true, JapaneseTokenizer.DEFAULT_MODE);
         TokenStream sink = new SetKeywordMarkerFilter(source, exclusionSet);
         return new TokenStreamComponents(source, new JapaneseBaseFormFilter(sink));
       }

@@ -30,11 +30,18 @@ import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.StorableField;
 import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.valuesource.SortedSetFieldSource;
 import org.apache.lucene.search.SortField;
+import org.apache.lucene.search.SortedSetSortField;
+import org.apache.lucene.uninverting.UninvertingReader.Type;
+import org.apache.lucene.util.AttributeFactory;
 import org.apache.lucene.util.AttributeSource;
 import org.apache.lucene.util.AttributeSource.State;
 import org.apache.solr.analysis.SolrAnalyzer;
 import org.apache.solr.response.TextResponseWriter;
+import org.apache.solr.search.QParser;
+import org.apache.solr.search.Sorting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,6 +61,7 @@ public class PreAnalyzedField extends FieldType {
 
   
   private PreAnalyzedParser parser;
+  private Analyzer analyzer;
   
   @Override
   public void init(IndexSchema schema, Map<String, String> args) {
@@ -78,24 +86,25 @@ public class PreAnalyzedField extends FieldType {
           parser = new JsonPreAnalyzedParser();
         }
       }
+      args.remove(PARSER_IMPL);
     }
-  }
-
-  @Override
-  public Analyzer getAnalyzer() {
-    return new SolrAnalyzer() {
-      
+    // create Analyzer instance for reuse:
+    analyzer = new SolrAnalyzer() {
       @Override
       protected TokenStreamComponents createComponents(String fieldName) {
         return new TokenStreamComponents(new PreAnalyzedTokenizer(parser));
       }
-      
     };
+  }
+
+  @Override
+  public Analyzer getIndexAnalyzer() {
+    return analyzer;
   }
   
   @Override
   public Analyzer getQueryAnalyzer() {
-    return getAnalyzer();
+    return getIndexAnalyzer();
   }
 
   @Override
@@ -110,10 +119,21 @@ public class PreAnalyzedField extends FieldType {
     }
     return f;
   }
-
+  
   @Override
   public SortField getSortField(SchemaField field, boolean top) {
-    return getStringSort(field, top);
+    field.checkSortability();
+    return Sorting.getTextSortField(field.getName(), top, field.sortMissingLast(), field.sortMissingFirst());
+  }
+  
+  @Override
+  public ValueSource getValueSource(SchemaField field, QParser parser) {
+    return new SortedSetFieldSource(field.getName());
+  }
+
+  @Override
+  public Type getUninversionType(SchemaField sf) {
+    return Type.SORTED_SET_BINARY;
   }
 
   @Override
@@ -254,6 +274,8 @@ public class PreAnalyzedField extends FieldType {
     private PreAnalyzedParser parser;
     
     public PreAnalyzedTokenizer(PreAnalyzedParser parser) {
+      // we don't pack attributes: since we are used for (de)serialization and dont want bloat.
+      super(AttributeFactory.DEFAULT_ATTRIBUTE_FACTORY);
       this.parser = parser;
     }
     

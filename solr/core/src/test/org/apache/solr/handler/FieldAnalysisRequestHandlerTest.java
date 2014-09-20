@@ -19,6 +19,7 @@ package org.apache.solr.handler;
 
 import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.analysis.core.WhitespaceTokenizer;
+import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.AnalysisParams;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
@@ -106,6 +107,37 @@ public class FieldAnalysisRequestHandlerTest extends AnalysisRequestHandlerTestB
     req=new LocalSolrQueryRequest(h.getCore(), params);
     request = handler.resolveAnalysisRequest(req);
     assertNull(request.getQuery());
+    req.close();
+
+    // test absence of index-time value and presence of q
+    params.remove(AnalysisParams.FIELD_VALUE);
+    params.add(CommonParams.Q, "quick lazy");
+    request = handler.resolveAnalysisRequest(req);
+    assertEquals("quick lazy", request.getQuery());
+    req.close();
+
+    // test absence of index-time value and presence of query
+    params.remove(CommonParams.Q);
+    params.add(AnalysisParams.QUERY, "quick lazy");
+    request = handler.resolveAnalysisRequest(req);
+    assertEquals("quick lazy", request.getQuery());
+    req.close();
+
+    // must fail if all of q, analysis.query or analysis.value are absent
+    params.remove(CommonParams.Q);
+    params.remove(AnalysisParams.QUERY);
+    params.remove(AnalysisParams.FIELD_VALUE);
+    try {
+      request = handler.resolveAnalysisRequest(req);
+      fail("Analysis request must fail if all of q, analysis.query or analysis.value are absent");
+    } catch (SolrException e) {
+      if (e.code() != SolrException.ErrorCode.BAD_REQUEST.code)  {
+        fail("Unexpected exception");
+      }
+    } catch (Exception e) {
+      fail("Unexpected exception");
+    }
+
     req.close();
   }
 
@@ -379,5 +411,4 @@ public class FieldAnalysisRequestHandlerTest extends AnalysisRequestHandlerTestB
     assertToken(tokenList.get(4), new TokenInfo("a", null, "word", 12, 13, 4, new int[]{3,4,4}, null, false));
     assertToken(tokenList.get(5), new TokenInfo("test", null, "word", 14, 18, 5, new int[]{4,5,5}, null, false));
   }
-  
 }

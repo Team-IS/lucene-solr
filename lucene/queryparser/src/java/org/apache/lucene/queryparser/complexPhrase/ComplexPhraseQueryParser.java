@@ -38,7 +38,6 @@ import org.apache.lucene.search.spans.SpanNotQuery;
 import org.apache.lucene.search.spans.SpanOrQuery;
 import org.apache.lucene.search.spans.SpanQuery;
 import org.apache.lucene.search.spans.SpanTermQuery;
-import org.apache.lucene.util.Version;
 
 /**
  * QueryParser which permits complex phrase query syntax eg "(john jon
@@ -80,8 +79,8 @@ public class ComplexPhraseQueryParser extends QueryParser {
 
   private ComplexPhraseQuery currentPhraseQuery = null;
 
-  public ComplexPhraseQueryParser(Version matchVersion, String f, Analyzer a) {
-    super(matchVersion, f, a);
+  public ComplexPhraseQueryParser(String f, Analyzer a) {
+    super(f, a);
   }
 
   @Override
@@ -208,11 +207,11 @@ public class ComplexPhraseQueryParser extends QueryParser {
    */
   static class ComplexPhraseQuery extends Query {
 
-    String field;
+    final String field;
 
-    String phrasedQueryStringContents;
+    final String phrasedQueryStringContents;
 
-    int slopFactor;
+    final int slopFactor;
 
     private final boolean inOrder;
 
@@ -394,6 +393,7 @@ public class ComplexPhraseQueryParser extends QueryParser {
           + ((phrasedQueryStringContents == null) ? 0
               : phrasedQueryStringContents.hashCode());
       result = prime * result + slopFactor;
+      result = prime * result + (inOrder ? 1 : 0);
       return result;
     }
 
@@ -422,7 +422,7 @@ public class ComplexPhraseQueryParser extends QueryParser {
         return false;
       if (slopFactor != other.slopFactor)
         return false;
-      return true;
+      return inOrder == other.inOrder;
     }
   }
 }

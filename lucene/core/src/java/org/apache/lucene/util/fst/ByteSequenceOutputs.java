@@ -22,6 +22,8 @@ import java.io.IOException;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.StringHelper;
 
 /**
  * An FST {@link Outputs} implementation where each output
@@ -79,13 +81,16 @@ public final class ByteSequenceOutputs extends Outputs<BytesRef> {
     if (inc == NO_OUTPUT) {
       // no prefix removed
       return output;
-    } else if (inc.length == output.length) {
-      // entire output removed
-      return NO_OUTPUT;
     } else {
-      assert inc.length < output.length: "inc.length=" + inc.length + " vs output.length=" + output.length;
-      assert inc.length > 0;
-      return new BytesRef(output.bytes, output.offset + inc.length, output.length-inc.length);
+      assert StringHelper.startsWith(output, inc);
+      if (inc.length == output.length) {
+        // entire output removed
+        return NO_OUTPUT;
+      } else {
+        assert inc.length < output.length: "inc.length=" + inc.length + " vs output.length=" + output.length;
+        assert inc.length > 0;
+        return new BytesRef(output.bytes, output.offset + inc.length, output.length-inc.length);
+      }
     }
   }
 
@@ -129,6 +134,14 @@ public final class ByteSequenceOutputs extends Outputs<BytesRef> {
   }
 
   @Override
+  public void skipOutput(DataInput in) throws IOException {
+    final int len = in.readVInt();
+    if (len != 0) {
+      in.skipBytes(len);
+    }
+  }
+
+  @Override
   public BytesRef getNoOutput() {
     return NO_OUTPUT;
   }
@@ -136,5 +149,17 @@ public final class ByteSequenceOutputs extends Outputs<BytesRef> {
   @Override
   public String outputToString(BytesRef output) {
     return output.toString();
+  }
+
+  private static final long BASE_NUM_BYTES = RamUsageEstimator.shallowSizeOf(NO_OUTPUT);
+
+  @Override
+  public long ramBytesUsed(BytesRef output) {
+    return BASE_NUM_BYTES + RamUsageEstimator.sizeOf(output.bytes);
+  }
+
+  @Override
+  public String toString() {
+    return "ByteSequenceOutputs";
   }
 }

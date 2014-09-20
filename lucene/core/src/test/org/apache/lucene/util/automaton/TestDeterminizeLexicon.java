@@ -17,6 +17,7 @@ package org.apache.lucene.util.automaton;
  * limitations under the License.
  */
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -40,7 +41,7 @@ public class TestDeterminizeLexicon extends LuceneTestCase {
       for (int j = 0; j < 5000; j++) {
         String randomString = TestUtil.randomUnicodeString(random());
         terms.add(randomString);
-        automata.add(BasicAutomata.makeString(randomString));
+        automata.add(Automata.makeString(randomString));
       }
       assertLexicon();
     }
@@ -48,15 +49,15 @@ public class TestDeterminizeLexicon extends LuceneTestCase {
   
   public void assertLexicon() throws Exception {
     Collections.shuffle(automata, random());
-    final Automaton lex = BasicOperations.union(automata);
-    lex.determinize();
-    assertTrue(SpecialOperations.isFinite(lex));
+    Automaton lex = Operations.union(automata);
+    lex = Operations.determinize(lex);
+    assertTrue(Operations.isFinite(lex));
     for (String s : terms) {
-      assertTrue(BasicOperations.run(lex, s));
+      assertTrue(Operations.run(lex, s));
     }
     final ByteRunAutomaton lexByte = new ByteRunAutomaton(lex);
     for (String s : terms) {
-      byte bytes[] = s.getBytes("UTF-8");
+      byte bytes[] = s.getBytes(StandardCharsets.UTF_8);
       assertTrue(lexByte.run(bytes, 0, bytes.length));
     }
   }

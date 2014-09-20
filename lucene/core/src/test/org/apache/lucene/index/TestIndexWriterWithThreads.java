@@ -137,10 +137,11 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
       MockDirectoryWrapper dir = newMockDirectory();
       IndexWriter writer = new IndexWriter(
           dir,
-          newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).
-              setMaxBufferedDocs(2).
-              setMergeScheduler(new ConcurrentMergeScheduler()).
-              setMergePolicy(newLogMergePolicy(4))
+          newIndexWriterConfig(new MockAnalyzer(random()))
+            .setMaxBufferedDocs(2)
+            .setMergeScheduler(new ConcurrentMergeScheduler())
+            .setMergePolicy(newLogMergePolicy(4))
+            .setCommitOnClose(false)
       );
       ((ConcurrentMergeScheduler) writer.getConfig().getMergeScheduler()).setSuppressExceptions();
       dir.setMaxSizeInBytes(4*1024+20*iter);
@@ -163,7 +164,11 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
       // Make sure once disk space is avail again, we can
       // cleanly close:
       dir.setMaxSizeInBytes(0);
-      writer.close(false);
+      try {
+        writer.commit();
+      } finally {
+        writer.close();
+      }
       dir.close();
     }
   }
@@ -184,10 +189,11 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
 
       IndexWriter writer = new IndexWriter(
           dir,
-          newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).
-              setMaxBufferedDocs(10).
-              setMergeScheduler(new ConcurrentMergeScheduler()).
-              setMergePolicy(newLogMergePolicy(4))
+          newIndexWriterConfig(new MockAnalyzer(random()))
+            .setMaxBufferedDocs(10)
+            .setMergeScheduler(new ConcurrentMergeScheduler())
+            .setMergePolicy(newLogMergePolicy(4))
+            .setCommitOnClose(false)
       );
       ((ConcurrentMergeScheduler) writer.getConfig().getMergeScheduler()).setSuppressExceptions();
 
@@ -215,7 +221,11 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
       if (VERBOSE) {
         System.out.println("\nTEST: now close");
       }
-      writer.close(false);
+      try {
+        writer.commit();
+      } finally {
+        writer.close();
+      }
 
       // Make sure threads that are adding docs are not hung:
       for(int i=0;i<NUM_THREADS;i++) {
@@ -259,10 +269,11 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
 
       IndexWriter writer = new IndexWriter(
           dir,
-          newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).
-              setMaxBufferedDocs(2).
-              setMergeScheduler(new ConcurrentMergeScheduler()).
-              setMergePolicy(newLogMergePolicy(4))
+          newIndexWriterConfig(new MockAnalyzer(random()))
+             .setMaxBufferedDocs(2)
+             .setMergeScheduler(new ConcurrentMergeScheduler())
+             .setMergePolicy(newLogMergePolicy(4))
+             .setCommitOnClose(false)
       );
       ((ConcurrentMergeScheduler) writer.getConfig().getMergeScheduler()).setSuppressExceptions();
 
@@ -286,11 +297,12 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
 
       boolean success = false;
       try {
-        writer.close(false);
+        writer.commit();
+        writer.close();
         success = true;
       } catch (IOException ioe) {
+        writer.rollback();
         failure.clearDoFail();
-        writer.close(false);
       }
       if (VERBOSE) {
         System.out.println("TEST: success=" + success);
@@ -317,8 +329,10 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
   public void _testSingleThreadFailure(MockDirectoryWrapper.Failure failure) throws IOException {
     MockDirectoryWrapper dir = newMockDirectory();
 
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random()))
-      .setMaxBufferedDocs(2).setMergeScheduler(new ConcurrentMergeScheduler()));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                .setMaxBufferedDocs(2)
+                                                .setMergeScheduler(new ConcurrentMergeScheduler())
+                                                .setCommitOnClose(false));
     final Document doc = new Document();
     FieldType customType = new FieldType(TextField.TYPE_STORED);
     customType.setStoreTermVectors(true);
@@ -340,7 +354,11 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
     }
     failure.clearDoFail();
     writer.addDocument(doc);
-    writer.close(false);
+    try {
+      writer.commit();
+    } finally {
+      writer.close();
+    }
     dir.close();
   }
 
@@ -427,7 +445,7 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
       if (doFail) {
         StackTraceElement[] trace = new Exception().getStackTrace();
         for (int i = 0; i < trace.length; i++) {
-          if ("flush".equals(trace[i].getMethodName()) && "org.apache.lucene.index.DocFieldProcessor".equals(trace[i].getClassName())) {
+          if ("flush".equals(trace[i].getMethodName()) && DefaultIndexingChain.class.getName().equals(trace[i].getClassName())) {
             if (onlyOnce)
               doFail = false;
             //System.out.println(Thread.currentThread().getName() + ": NOW FAIL: onlyOnce=" + onlyOnce);
@@ -523,8 +541,7 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
         Document doc = new Document();
         Field field = newTextField("field", "testData", Field.Store.YES);
         doc.add(field);
-        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-                                                                       TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
         iwConstructed.countDown();
         startIndexing.await();
         writer.addDocument(doc);
@@ -551,7 +568,9 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
     MockAnalyzer analyzer = new MockAnalyzer(random());
     analyzer.setMaxTokenLength(TestUtil.nextInt(random(), 1, IndexWriter.MAX_TERM_LENGTH));
 
-    writerRef.set(new IndexWriter(d, newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer)));
+    writerRef.set(new IndexWriter(d, newIndexWriterConfig(analyzer)));
+    // Make initial commit so the test doesn't trip "corrupt first commit" when virus checker refuses to delete partial segments_N file:
+    writerRef.get().commit();
     final LineFileDocs docs = new LineFileDocs(random());
     final Thread[] threads = new Thread[threadCount];
     final int iters = atLeast(100);
@@ -577,7 +596,7 @@ public class TestIndexWriterWithThreads extends LuceneTestCase {
                     if (VERBOSE) {
                       System.out.println("TEST: " + Thread.currentThread().getName() + ": rollback done; now open new writer");
                     }
-                    writerRef.set(new IndexWriter(d, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))));
+                    writerRef.set(new IndexWriter(d, newIndexWriterConfig(new MockAnalyzer(random()))));
                   } finally {
                     rollbackLock.unlock();
                   }

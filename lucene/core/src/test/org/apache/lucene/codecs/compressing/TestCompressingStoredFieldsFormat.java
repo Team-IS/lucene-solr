@@ -27,9 +27,10 @@ import org.apache.lucene.document.Field.Store;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.IntField;
 import org.apache.lucene.index.BaseStoredFieldsFormatTestCase;
+import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
-import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.junit.Test;
 
 import com.carrotsearch.randomizedtesting.annotations.Repeat;
@@ -46,13 +47,19 @@ public class TestCompressingStoredFieldsFormat extends BaseStoredFieldsFormatTes
   @Test(expected=IllegalArgumentException.class)
   public void testDeletePartiallyWrittenFilesIfAbort() throws IOException {
     Directory dir = newDirectory();
-    IndexWriterConfig iwConf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    // test explicitly needs files to always be actually deleted
+    if (dir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)dir).setEnableVirusScanner(false);
+    }
+    IndexWriterConfig iwConf = newIndexWriterConfig(new MockAnalyzer(random()));
     iwConf.setMaxBufferedDocs(RandomInts.randomIntBetween(random(), 2, 30));
     iwConf.setCodec(CompressingCodec.randomInstance(random()));
     // disable CFS because this test checks file names
     iwConf.setMergePolicy(newLogMergePolicy(false));
     iwConf.setUseCompoundFile(false);
-    RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwConf);
+
+    // Cannot use RIW because this test wants CFS to stay off:
+    IndexWriter iw = new IndexWriter(dir, iwConf);
 
     final Document validDoc = new Document();
     validDoc.add(new IntField("id", 0, Store.YES));
@@ -67,6 +74,8 @@ public class TestCompressingStoredFieldsFormat extends BaseStoredFieldsFormatTes
       
       @Override
       public String stringValue() {
+        // TODO: really bad & scary that this causes IW to
+        // abort the segment!!  We should fix this.
         return null;
       }
       

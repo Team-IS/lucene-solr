@@ -23,6 +23,9 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
@@ -49,8 +52,7 @@ public class TestFilesystemResourceLoader extends LuceneTestCase {
   private void assertClasspathDelegation(ResourceLoader rl) throws Exception {
     // try a stopwords file from classpath
     CharArraySet set = WordlistLoader.getSnowballWordSet(
-      new InputStreamReader(rl.openResource("org/apache/lucene/analysis/snowball/english_stop.txt"), IOUtils.CHARSET_UTF_8),
-      TEST_VERSION_CURRENT
+      new InputStreamReader(rl.openResource("org/apache/lucene/analysis/snowball/english_stop.txt"), StandardCharsets.UTF_8)
     );
     assertTrue(set.contains("you"));
     // try to load a class; we use string comparison because classloader may be different...
@@ -61,10 +63,9 @@ public class TestFilesystemResourceLoader extends LuceneTestCase {
   }
   
   public void testBaseDir() throws Exception {
-    final File base = TestUtil.getTempDir("fsResourceLoaderBase").getAbsoluteFile();
+    final Path base = createTempDir("fsResourceLoaderBase");
     try {
-      base.mkdirs();
-      Writer os = new OutputStreamWriter(new FileOutputStream(new File(base, "template.txt")), IOUtils.CHARSET_UTF_8);
+      Writer os = Files.newBufferedWriter(base.resolve("template.txt"), StandardCharsets.UTF_8);
       try {
         os.write("foobar\n");
       } finally {
@@ -72,28 +73,21 @@ public class TestFilesystemResourceLoader extends LuceneTestCase {
       }
       
       ResourceLoader rl = new FilesystemResourceLoader(base);
-      assertEquals("foobar", WordlistLoader.getLines(rl.openResource("template.txt"), IOUtils.CHARSET_UTF_8).get(0));
+      assertEquals("foobar", WordlistLoader.getLines(rl.openResource("template.txt"), StandardCharsets.UTF_8).get(0));
       // Same with full path name:
-      String fullPath = new File(base, "template.txt").toString();
+      String fullPath = base.resolve("template.txt").toAbsolutePath().toString();
       assertEquals("foobar",
-          WordlistLoader.getLines(rl.openResource(fullPath), IOUtils.CHARSET_UTF_8).get(0));
-      assertClasspathDelegation(rl);
-      assertNotFound(rl);
-      
-      // now use RL without base dir:
-      rl = new FilesystemResourceLoader();
-      assertEquals("foobar",
-          WordlistLoader.getLines(rl.openResource(new File(base, "template.txt").toString()), IOUtils.CHARSET_UTF_8).get(0));
+          WordlistLoader.getLines(rl.openResource(fullPath), StandardCharsets.UTF_8).get(0));
       assertClasspathDelegation(rl);
       assertNotFound(rl);
     } finally {
-      TestUtil.rmDir(base);
+      IOUtils.rm(base);
     }
   }
   
   public void testDelegation() throws Exception {
-    ResourceLoader rl = new FilesystemResourceLoader(null, new StringMockResourceLoader("foobar\n"));
-    assertEquals("foobar", WordlistLoader.getLines(rl.openResource("template.txt"), IOUtils.CHARSET_UTF_8).get(0));
+    ResourceLoader rl = new FilesystemResourceLoader(createTempDir("empty"), new StringMockResourceLoader("foobar\n"));
+    assertEquals("foobar", WordlistLoader.getLines(rl.openResource("template.txt"), StandardCharsets.UTF_8).get(0));
   }
   
 }

@@ -31,7 +31,7 @@ import org.apache.lucene.analysis.core.KeywordTokenizer;
  * Test the Sorani Stemmer.
  */
 public class TestSoraniStemFilter extends BaseTokenStreamTestCase {
-  SoraniAnalyzer a = new SoraniAnalyzer(TEST_VERSION_CURRENT);
+  SoraniAnalyzer a = new SoraniAnalyzer();
   
   public void testIndefiniteSingular() throws Exception {
     checkOneTerm(a, "پیاوێک", "پیاو"); // -ek
@@ -95,6 +95,6 @@ public class TestSoraniStemFilter extends BaseTokenStreamTestCase {
   /** test against a basic vocabulary file */
   public void testVocabulary() throws Exception {
     // top 8k words or so: freq > 1000
-    assertVocabulary(a, getDataFile("ckbtestdata.zip"), "testdata.txt");
+    assertVocabulary(a, getDataPath("ckbtestdata.zip"), "testdata.txt");
   }
 }

@@ -48,8 +48,8 @@ public class MorfologikFilter extends TokenFilter {
   private final PositionIncrementAttribute posIncrAtt = addAttribute(PositionIncrementAttribute.class);
   private final KeywordAttribute keywordAttr = addAttribute(KeywordAttribute.class);
 
-  private final CharsRef scratch = new CharsRef(0);
-  private final CharacterUtils charUtils;
+  private final CharsRefBuilder scratch = new CharsRefBuilder();
+  private final CharacterUtils charUtils = CharacterUtils.getInstance();
 
   private State current;
   private final TokenStream input;
@@ -61,21 +61,28 @@ public class MorfologikFilter extends TokenFilter {
   private int lemmaListIndex;
 
   /**
-   * Creates MorfologikFilter
-   * @param in   input token stream
-   * @param version Lucene version compatibility for lowercasing.
+   * Creates a filter with the default (Polish) dictionary.
    */
-  public MorfologikFilter(final TokenStream in, final Version version) {
+  public MorfologikFilter(final TokenStream in) {
+    this(in, MorfologikFilterFactory.DEFAULT_DICTIONARY_RESOURCE);
+  }
+
+  /**
+   * Creates a filter with a given dictionary resource.
+   *
+   * @param in input token stream.
+   * @param dict Dictionary resource from classpath.
+   */
+  public MorfologikFilter(final TokenStream in, final String dict) {
     super(in);
     this.input = in;
-    
+
     // SOLR-4007: temporarily substitute context class loader to allow finding dictionary resources.
     Thread me = Thread.currentThread();
     ClassLoader cl = me.getContextClassLoader();
     try {
-      me.setContextClassLoader(PolishStemmer.class.getClassLoader());
-      this.stemmer = new PolishStemmer();
-      this.charUtils = CharacterUtils.getInstance(version);
+      me.setContextClassLoader(morfologik.stemming.Dictionary.class.getClassLoader());
+      this.stemmer = new DictionaryLookup(morfologik.stemming.Dictionary.getForLanguage(dict));
       this.lemmaList = Collections.emptyList();
     } finally {
       me.setContextClassLoader(cl);
@@ -144,16 +151,17 @@ public class MorfologikFilter extends TokenFilter {
    * Convert to lowercase in-place.
    */
   private CharSequence toLowercase(CharSequence chs) {
-    final int length = scratch.length = chs.length();
+    final int length = chs.length();
+    scratch.setLength(length);
     scratch.grow(length);
 
-    char buffer[] = scratch.chars;
+    char buffer[] = scratch.chars();
     for (int i = 0; i < length;) {
       i += Character.toChars(
           Character.toLowerCase(charUtils.codePointAt(chs, i)), buffer, i);      
     }
 
-    return scratch;
+    return scratch.get();
   }
 
   /** Resets stems accumulator and hands over to superclass. */

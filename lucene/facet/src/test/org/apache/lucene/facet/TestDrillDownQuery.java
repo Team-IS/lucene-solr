@@ -66,7 +66,7 @@ public class TestDrillDownQuery extends FacetTestCase {
     dir = newDirectory();
     Random r = random();
     RandomIndexWriter writer = new RandomIndexWriter(r, dir, 
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(r, MockTokenizer.KEYWORD, false)));
+        newIndexWriterConfig(new MockAnalyzer(r, MockTokenizer.KEYWORD, false)));
     
     taxoDir = newDirectory();
     TaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(taxoDir);
@@ -133,7 +133,6 @@ public class TestDrillDownQuery extends FacetTestCase {
     // Making sure the query yields 25 documents with the facet "a"
     DrillDownQuery q = new DrillDownQuery(config);
     q.add("a");
-    System.out.println("q=" + q);
     QueryUtils.check(q);
     TopDocs docs = searcher.search(q, 100);
     assertEquals(25, docs.totalHits);

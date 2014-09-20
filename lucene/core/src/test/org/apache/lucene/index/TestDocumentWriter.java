@@ -26,7 +26,6 @@ import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -34,7 +33,6 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.AttributeSource;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.TestUtil;
 
 public class TestDocumentWriter extends LuceneTestCase {
@@ -59,7 +57,7 @@ public class TestDocumentWriter extends LuceneTestCase {
   public void testAddDocument() throws Exception {
     Document testDoc = new Document();
     DocHelper.setupDoc(testDoc);
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
     writer.addDocument(testDoc);
     writer.commit();
     SegmentCommitInfo info = writer.newestSegment();
@@ -116,7 +114,7 @@ public class TestDocumentWriter extends LuceneTestCase {
       }
     };
 
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(analyzer));
 
     Document doc = new Document();
     doc.add(newTextField("repeated", "repeated one", Field.Store.YES));
@@ -189,7 +187,7 @@ public class TestDocumentWriter extends LuceneTestCase {
       }
     };
 
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(analyzer));
 
     Document doc = new Document();
     doc.add(newTextField("f1", "a 5 a a", Field.Store.YES));
@@ -215,8 +213,7 @@ public class TestDocumentWriter extends LuceneTestCase {
 
 
   public void testPreAnalyzedField() throws IOException {
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
     Document doc = new Document();
 
     doc.add(new TextField("preanalyzed", new TokenStream() {
@@ -262,42 +259,6 @@ public class TestDocumentWriter extends LuceneTestCase {
   }
 
   /**
-   * Test adding two fields with the same name, but 
-   * with different term vector setting (LUCENE-766).
-   */
-  public void testMixedTermVectorSettingsSameField() throws Exception {
-    Document doc = new Document();
-    // f1 first without tv then with tv
-    doc.add(newStringField("f1", "v1", Field.Store.YES));
-    FieldType customType2 = new FieldType(StringField.TYPE_STORED);
-    customType2.setStoreTermVectors(true);
-    customType2.setStoreTermVectorOffsets(true);
-    customType2.setStoreTermVectorPositions(true);
-    doc.add(newField("f1", "v2", customType2));
-    // f2 first with tv then without tv
-    doc.add(newField("f2", "v1", customType2));
-    doc.add(newStringField("f2", "v2", Field.Store.YES));
-
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random())));
-    writer.addDocument(doc);
-    writer.close();
-
-    TestUtil.checkIndex(dir);
-
-    IndexReader reader = DirectoryReader.open(dir);
-    // f1
-    Terms tfv1 = reader.getTermVectors(0).terms("f1");
-    assertNotNull(tfv1);
-    assertEquals("the 'with_tv' setting should rule!",2,tfv1.size());
-    // f2
-    Terms tfv2 = reader.getTermVectors(0).terms("f2");
-    assertNotNull(tfv2);
-    assertEquals("the 'with_tv' setting should rule!",2,tfv2.size());
-    reader.close();
-  }
-
-  /**
    * Test adding two fields with the same name, one indexed
    * the other stored only. The omitNorms and omitTermFreqAndPositions setting
    * of the stored field should not affect the indexed one (LUCENE-1590)
@@ -318,8 +279,7 @@ public class TestDocumentWriter extends LuceneTestCase {
     doc.add(f);
     doc.add(newField("f2", "v2", customType2));
 
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
     writer.addDocument(doc);
     writer.forceMerge(1); // be sure to have a single segment
     writer.close();

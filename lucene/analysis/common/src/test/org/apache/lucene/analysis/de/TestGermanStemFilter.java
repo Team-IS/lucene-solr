@@ -42,9 +42,9 @@ public class TestGermanStemFilter extends BaseTokenStreamTestCase {
   Analyzer analyzer = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      Tokenizer t = new KeywordTokenizer();
+      Tokenizer t = new MockTokenizer(MockTokenizer.KEYWORD, false);
       return new TokenStreamComponents(t,
-          new GermanStemFilter(new LowerCaseFilter(TEST_VERSION_CURRENT, t)));
+          new GermanStemFilter(new LowerCaseFilter(t)));
     }
   };
 
@@ -54,14 +54,8 @@ public class TestGermanStemFilter extends BaseTokenStreamTestCase {
     vocOut.close();
   }
   
-  // LUCENE-3043: we use keywordtokenizer in this test,
-  // so ensure the stemmer does not crash on zero-length strings.
-  public void testEmpty() throws Exception {
-    assertAnalyzesTo(analyzer, "", new String[] { "" });
-  }
-  
   public void testKeyword() throws IOException {
-    final CharArraySet exclusionSet = new CharArraySet(TEST_VERSION_CURRENT, asSet("sängerinnen"), false);
+    final CharArraySet exclusionSet = new CharArraySet( asSet("sängerinnen"), false);
     Analyzer a = new Analyzer() {
       @Override
       protected TokenStreamComponents createComponents(String fieldName) {

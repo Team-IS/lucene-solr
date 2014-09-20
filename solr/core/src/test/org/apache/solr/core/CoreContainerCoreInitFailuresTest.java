@@ -35,10 +35,7 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
   CoreContainer cc = null;
 
   private void init(final String dirSuffix) {
-    // would be nice to do this in an @Before method,
-    // but junit doesn't let @Before methods have test names
-    solrHome = new File(TEMP_DIR, this.getClass().getName() + "_" + dirSuffix);
-    assertTrue("Failed to mkdirs solrhome [" + solrHome + "]", solrHome.mkdirs());
+    solrHome = createTempDir(dirSuffix).toFile();
   }
 
   @After
@@ -48,17 +45,12 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
       cc = null;
     }
 
-    if (null != solrHome) {
-      if (solrHome.exists()) {
-        FileUtils.deleteDirectory(solrHome);
-      }
-      solrHome = null;
-    }
+    solrHome = null;
   }
 
   public void testFlowWithEmpty() throws Exception {
     // reused state
-    Map<String,Exception> failures = null;
+    Map<String,CoreContainer.CoreLoadFailure> failures = null;
     Collection<String> cores = null;
     Exception fail = null;
 
@@ -66,7 +58,7 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
 
     // solr.xml
     File solrXml = new File(solrHome, "solr.xml");
-    FileUtils.write(solrXml, EMPTY_SOLR_XML, IOUtils.CHARSET_UTF_8.toString());
+    FileUtils.write(solrXml, EMPTY_SOLR_XML, IOUtils.UTF_8);
 
     // ----
     // init the CoreContainer
@@ -105,7 +97,7 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
     failures = cc.getCoreInitFailures();
     assertNotNull("core failures is a null map", failures);
     assertEquals("wrong number of core failures", 1, failures.size());
-    fail = failures.get("bogus");
+    fail = failures.get("bogus").exception;
     assertNotNull("null failure for test core", fail);
     assertTrue("init failure doesn't mention problem: " + fail.getCause().getMessage(),
                0 < fail.getCause().getMessage().indexOf("bogus_path"));
@@ -133,7 +125,7 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
   public void testFlowBadFromStart() throws Exception {
 
     // reused state
-    Map<String,Exception> failures = null;
+    Map<String,CoreContainer.CoreLoadFailure> failures = null;
     Collection<String> cores = null;
     Exception fail = null;
 
@@ -141,7 +133,7 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
 
     // start with two collections: one valid, and one broken
     File solrXml = new File(solrHome, "solr.xml");
-    FileUtils.write(solrXml, BAD_SOLR_XML, IOUtils.CHARSET_UTF_8.toString());
+    FileUtils.write(solrXml, BAD_SOLR_XML, IOUtils.UTF_8);
 
     // our "ok" collection
     FileUtils.copyFile(getFile("solr/collection1/conf/solrconfig-defaults.xml"),
@@ -172,7 +164,7 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
     failures = cc.getCoreInitFailures();
     assertNotNull("core failures is a null map", failures);
     assertEquals("wrong number of core failures", 1, failures.size());
-    fail = failures.get("col_bad");
+    fail = failures.get("col_bad").exception;
     assertNotNull("null failure for test core", fail);
     assertTrue("init failure doesn't mention problem: " + fail.getMessage(),
                0 < fail.getMessage().indexOf("DummyMergePolicy"));
@@ -196,7 +188,7 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
     FileUtils.copyFile(getFile("solr/collection1/conf/solrconfig-defaults.xml"),
                        FileUtils.getFile(solrHome, "col_bad", "conf", "solrconfig.xml"));
     final CoreDescriptor fixed = new CoreDescriptor(cc, "col_bad", "col_bad");
-    cc.register("col_bad", cc.create(fixed), false);
+    cc.create(fixed);
     
     // check that we have the cores we expect
     cores = cc.getCoreNames();
@@ -235,7 +227,7 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
     failures = cc.getCoreInitFailures();
     assertNotNull("core failures is a null map", failures);
     assertEquals("wrong number of core failures", 1, failures.size());
-    fail = failures.get("bogus");
+    fail = failures.get("bogus").exception;
     assertNotNull("null failure for test core", fail);
     assertTrue("init failure doesn't mention problem: " + fail.getCause().getMessage(),
                0 < fail.getCause().getMessage().indexOf("bogus_path"));
@@ -255,24 +247,6 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
     }
 
     // -----
-    // register bogus as an alias for col_ok and confirm failure goes away
-    cc.register("bogus", cc.getCore("col_ok"), false);
-
-    // check that we have the cores we expect
-    cores = cc.getCoreNames();
-    assertNotNull("core names is null", cores);
-    assertEquals("wrong number of cores", 3, cores.size());
-    assertTrue("col_ok not found", cores.contains("col_ok"));
-    assertTrue("col_bad not found", cores.contains("col_bad"));
-    assertTrue("bogus not found", cores.contains("bogus"));
-    
-    // check that we have the failures we expect
-    failures = cc.getCoreInitFailures();
-    assertNotNull("core failures is a null map", failures);
-    assertEquals("wrong number of core failures", 0, failures.size());
-
-
-    // -----
     // break col_bad's config and try to RELOAD to add failure
 
     final long col_bad_old_start = getCoreStartTime(cc, "col_bad");
@@ -280,16 +254,17 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
     FileUtils.write
       (FileUtils.getFile(solrHome, "col_bad", "conf", "solrconfig.xml"),
        "This is giberish, not valid XML <", 
-       IOUtils.CHARSET_UTF_8.toString());
+       IOUtils.UTF_8);
 
     try {
       ignoreException(Pattern.quote("SAX"));
       cc.reload("col_bad");
       fail("corrupt solrconfig.xml failed to trigger exception from reload");
     } catch (SolrException e) {
+      Throwable rootException = getWrappedException(e);
       assertTrue("We're supposed to have a wrapped SAXParserException here, but we don't",
-          e.getCause().getCause() instanceof SAXParseException);
-      SAXParseException se = (SAXParseException)e.getCause().getCause();
+          rootException instanceof SAXParseException);
+      SAXParseException se = (SAXParseException) rootException;
       assertTrue("reload exception doesn't refer to slrconfig.xml " + se.getSystemId(),
           0 < se.getSystemId().indexOf("solrconfig.xml"));
 
@@ -301,21 +276,20 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
     // check that we have the cores we expect
     cores = cc.getCoreNames();
     assertNotNull("core names is null", cores);
-    assertEquals("wrong number of cores", 3, cores.size());
+    assertEquals("wrong number of cores", 2, cores.size());
     assertTrue("col_ok not found", cores.contains("col_ok"));
     assertTrue("col_bad not found", cores.contains("col_bad"));
-    assertTrue("bogus not found", cores.contains("bogus"));
-    
+
     // check that we have the failures we expect
     failures = cc.getCoreInitFailures();
     assertNotNull("core failures is a null map", failures);
-    assertEquals("wrong number of core failures", 1, failures.size());
-    fail = failures.get("col_bad");
-    assertNotNull("null failure for test core", fail);
+    assertEquals("wrong number of core failures", 2, failures.size());
+    Throwable ex = getWrappedException(failures.get("col_bad").exception);
+    assertNotNull("null failure for test core", ex);
     assertTrue("init failure isn't SAXParseException",
-               fail.getCause() instanceof SAXParseException);
-    assertTrue("init failure doesn't mention problem: " + fail.toString(),
-               0 < ((SAXParseException)fail.getCause()).getSystemId().indexOf("solrconfig.xml"));
+               ex instanceof SAXParseException);
+    SAXParseException saxEx = (SAXParseException) ex;
+    assertTrue("init failure doesn't mention problem: " + saxEx.toString(), saxEx.getSystemId().contains("solrconfig.xml"));
 
     // ----
     // fix col_bad's config (again) and RELOAD to fix failure
@@ -330,28 +304,23 @@ public class CoreContainerCoreInitFailuresTest extends SolrTestCaseJ4 {
     // check that we have the cores we expect
     cores = cc.getCoreNames();
     assertNotNull("core names is null", cores);
-    assertEquals("wrong number of cores", 3, cores.size());
+    assertEquals("wrong number of cores", 2, cores.size());
     assertTrue("col_ok not found", cores.contains("col_ok"));
     assertTrue("col_bad not found", cores.contains("col_bad"));
-    assertTrue("bogus not found", cores.contains("bogus"));
-    
+
     // check that we have the failures we expect
     failures = cc.getCoreInitFailures();
     assertNotNull("core failures is a null map", failures);
-    assertEquals("wrong number of core failures", 0, failures.size());
+    assertEquals("wrong number of core failures", 1, failures.size());
 
   }
 
-  private final long getCoreStartTime(final CoreContainer cc, 
-                                      final String name) {
-    SolrCore tmp = cc.getCore(name);
-    try {
+  private long getCoreStartTime(final CoreContainer cc, final String name) {
+    try (SolrCore tmp = cc.getCore(name)) {
       return tmp.getStartTime();
-    } finally {
-      tmp.close();
     }
   }
-  
+
   private static final String EMPTY_SOLR_XML ="<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n" +
       "<solr persistent=\"false\">\n" +
       "  <cores adminPath=\"/admin/cores\">\n" +

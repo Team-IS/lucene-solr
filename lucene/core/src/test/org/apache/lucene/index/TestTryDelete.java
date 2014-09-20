@@ -41,8 +41,7 @@ public class TestTryDelete extends LuceneTestCase
     throws IOException
   {
     MergePolicy policy = new LogByteSizeMergePolicy();
-    IndexWriterConfig conf = new IndexWriterConfig(TEST_VERSION_CURRENT,
-                                                   new MockAnalyzer(random()));
+    IndexWriterConfig conf = new IndexWriterConfig(new MockAnalyzer(random()));
     conf.setMergePolicy(policy);
     conf.setOpenMode(OpenMode.CREATE_OR_APPEND);
 

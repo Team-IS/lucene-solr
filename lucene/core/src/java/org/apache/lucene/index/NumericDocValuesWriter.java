@@ -25,8 +25,8 @@ import org.apache.lucene.codecs.DocValuesConsumer;
 import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.RamUsageEstimator;
-import org.apache.lucene.util.packed.AppendingDeltaPackedLongBuffer;
 import org.apache.lucene.util.packed.PackedInts;
+import org.apache.lucene.util.packed.PackedLongValues;
 
 /** Buffers up pending long per doc, then flushes when
  *  segment flushes. */
@@ -34,15 +34,15 @@ class NumericDocValuesWriter extends DocValuesWriter {
 
   private final static long MISSING = 0L;
 
-  private AppendingDeltaPackedLongBuffer pending;
+  private PackedLongValues.Builder pending;
   private final Counter iwBytesUsed;
   private long bytesUsed;
   private FixedBitSet docsWithField;
   private final FieldInfo fieldInfo;
 
-  public NumericDocValuesWriter(FieldInfo fieldInfo, Counter iwBytesUsed, boolean trackDocsWithField) {
-    pending = new AppendingDeltaPackedLongBuffer(PackedInts.COMPACT);
-    docsWithField = trackDocsWithField ? new FixedBitSet(64) : null;
+  public NumericDocValuesWriter(FieldInfo fieldInfo, Counter iwBytesUsed) {
+    pending = PackedLongValues.deltaPackedBuilder(PackedInts.COMPACT);
+    docsWithField = new FixedBitSet(64);
     bytesUsed = pending.ramBytesUsed() + docsWithFieldBytesUsed();
     this.fieldInfo = fieldInfo;
     this.iwBytesUsed = iwBytesUsed;
@@ -60,17 +60,15 @@ class NumericDocValuesWriter extends DocValuesWriter {
     }
 
     pending.add(value);
-    if (docsWithField != null) {
-      docsWithField = FixedBitSet.ensureCapacity(docsWithField, docID);
-      docsWithField.set(docID);
-    }
-
+    docsWithField = FixedBitSet.ensureCapacity(docsWithField, docID);
+    docsWithField.set(docID);
+    
     updateBytesUsed();
   }
   
   private long docsWithFieldBytesUsed() {
     // size of the long[] + some overhead
-    return docsWithField == null ? 0 : RamUsageEstimator.sizeOf(docsWithField.getBits()) + 64;
+    return RamUsageEstimator.sizeOf(docsWithField.getBits()) + 64;
   }
 
   private void updateBytesUsed() {
@@ -87,29 +85,30 @@ class NumericDocValuesWriter extends DocValuesWriter {
   public void flush(SegmentWriteState state, DocValuesConsumer dvConsumer) throws IOException {
 
     final int maxDoc = state.segmentInfo.getDocCount();
+    final PackedLongValues values = pending.build();
 
     dvConsumer.addNumericField(fieldInfo,
                                new Iterable<Number>() {
                                  @Override
                                  public Iterator<Number> iterator() {
-                                   return new NumericIterator(maxDoc);
+                                   return new NumericIterator(maxDoc, values, docsWithField);
                                  }
                                });
   }
 
-  @Override
-  public void abort() {
-  }
-  
   // iterates over the values we have in ram
-  private class NumericIterator implements Iterator<Number> {
-    final AppendingDeltaPackedLongBuffer.Iterator iter = pending.iterator();
-    final int size = (int)pending.size();
+  private static class NumericIterator implements Iterator<Number> {
+    final PackedLongValues.Iterator iter;
+    final FixedBitSet docsWithField;
+    final int size;
     final int maxDoc;
     int upto;
     
-    NumericIterator(int maxDoc) {
+    NumericIterator(int maxDoc, PackedLongValues values, FixedBitSet docsWithFields) {
       this.maxDoc = maxDoc;
+      this.iter = values.iterator();
+      this.size = (int) values.size();
+      this.docsWithField = docsWithFields;
     }
     
     @Override
@@ -125,13 +124,13 @@ class NumericDocValuesWriter extends DocValuesWriter {
       Long value;
       if (upto < size) {
         long v = iter.next();
-        if (docsWithField == null || docsWithField.get(upto)) {
+        if (docsWithField.get(upto)) {
           value = v;
         } else {
           value = null;
         }
       } else {
-        value = docsWithField != null ? null : MISSING;
+        value = null;
       }
       upto++;
       return value;

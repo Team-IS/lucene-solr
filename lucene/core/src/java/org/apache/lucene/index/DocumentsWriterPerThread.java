@@ -17,14 +17,12 @@ package org.apache.lucene.index;
  * limitations under the License.
  */
 
-import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_MASK;
-import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_SIZE;
-
 import java.io.IOException;
 import java.text.NumberFormat;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.codecs.Codec;
@@ -36,12 +34,16 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.TrackingDirectoryWrapper;
 import org.apache.lucene.util.ByteBlockPool.Allocator;
 import org.apache.lucene.util.ByteBlockPool.DirectTrackingAllocator;
-import org.apache.lucene.util.Constants;
 import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.IntBlockPool;
 import org.apache.lucene.util.MutableBits;
 import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.StringHelper;
+import org.apache.lucene.util.Version;
+
+import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_MASK;
+import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_SIZE;
 
 class DocumentsWriterPerThread {
 
@@ -51,48 +53,15 @@ class DocumentsWriterPerThread {
    * documents.
    */
   abstract static class IndexingChain {
-    abstract DocConsumer getChain(DocumentsWriterPerThread documentsWriterPerThread);
+    abstract DocConsumer getChain(DocumentsWriterPerThread documentsWriterPerThread) throws IOException;
   }
   
 
   static final IndexingChain defaultIndexingChain = new IndexingChain() {
 
     @Override
-    DocConsumer getChain(DocumentsWriterPerThread documentsWriterPerThread) {
-      /*
-      This is the current indexing chain:
-
-      DocConsumer / DocConsumerPerThread
-        --> code: DocFieldProcessor
-          --> DocFieldConsumer / DocFieldConsumerPerField
-            --> code: DocFieldConsumers / DocFieldConsumersPerField
-              --> code: DocInverter / DocInverterPerField
-                --> InvertedDocConsumer / InvertedDocConsumerPerField
-                  --> code: TermsHash / TermsHashPerField
-                    --> TermsHashConsumer / TermsHashConsumerPerField
-                      --> code: FreqProxTermsWriter / FreqProxTermsWriterPerField
-                      --> code: TermVectorsTermsWriter / TermVectorsTermsWriterPerField
-                --> InvertedDocEndConsumer / InvertedDocConsumerPerField
-                  --> code: NormsConsumer / NormsConsumerPerField
-          --> StoredFieldsConsumer
-            --> TwoStoredFieldConsumers
-              -> code: StoredFieldsProcessor
-              -> code: DocValuesProcessor
-    */
-
-    // Build up indexing chain:
-
-      final TermsHashConsumer termVectorsWriter = new TermVectorsConsumer(documentsWriterPerThread);
-      final TermsHashConsumer freqProxWriter = new FreqProxTermsWriter();
-
-      final InvertedDocConsumer termsHash = new TermsHash(documentsWriterPerThread, freqProxWriter, true,
-                                                          new TermsHash(documentsWriterPerThread, termVectorsWriter, false, null));
-      final NormsConsumer normsWriter = new NormsConsumer();
-      final DocInverter docInverter = new DocInverter(documentsWriterPerThread.docState, termsHash, normsWriter);
-      final StoredFieldsConsumer storedFields = new TwoStoredFieldsConsumers(
-                                                      new StoredFieldsProcessor(documentsWriterPerThread),
-                                                      new DocValuesProcessor(documentsWriterPerThread.bytesUsed));
-      return new DocFieldProcessor(documentsWriterPerThread, docInverter, storedFields);
+    DocConsumer getChain(DocumentsWriterPerThread documentsWriterPerThread) throws IOException {
+      return new DefaultIndexingChain(documentsWriterPerThread);
     }
   };
 
@@ -103,7 +72,6 @@ class DocumentsWriterPerThread {
     Similarity similarity;
     int docID;
     IndexDocument doc;
-    String maxTermPrefix;
 
     DocState(DocumentsWriterPerThread docWriter, InfoStream infoStream) {
       this.docWriter = docWriter;
@@ -180,7 +148,7 @@ class DocumentsWriterPerThread {
   boolean aborting = false;   // True if an abort is pending
   boolean hasAborted = false; // True if the last exception throws by #updateDocument was aborting
 
-  private FieldInfos.Builder fieldInfos;
+  private final FieldInfos.Builder fieldInfos;
   private final InfoStream infoStream;
   private int numDocsInRAM;
   final DocumentsWriterDeleteQueue deleteQueue;
@@ -188,11 +156,11 @@ class DocumentsWriterPerThread {
   private final NumberFormat nf = NumberFormat.getInstance(Locale.ROOT);
   final Allocator byteBlockAllocator;
   final IntBlockPool.Allocator intBlockAllocator;
+  private final AtomicLong pendingNumDocs;
   private final LiveIndexWriterConfig indexWriterConfig;
-
   
   public DocumentsWriterPerThread(String segmentName, Directory directory, LiveIndexWriterConfig indexWriterConfig, InfoStream infoStream, DocumentsWriterDeleteQueue deleteQueue,
-      FieldInfos.Builder fieldInfos) {
+                                  FieldInfos.Builder fieldInfos, AtomicLong pendingNumDocs) throws IOException {
     this.directoryOrig = directory;
     this.directory = new TrackingDirectoryWrapper(directory);
     this.fieldInfos = fieldInfos;
@@ -201,6 +169,7 @@ class DocumentsWriterPerThread {
     this.codec = indexWriterConfig.getCodec();
     this.docState = new DocState(this, infoStream);
     this.docState.similarity = indexWriterConfig.getSimilarity();
+    this.pendingNumDocs = pendingNumDocs;
     bytesUsed = Counter.newCounter();
     byteBlockAllocator = new DirectTrackingAllocator(bytesUsed);
     pendingUpdates = new BufferedUpdates();
@@ -210,7 +179,7 @@ class DocumentsWriterPerThread {
     pendingUpdates.clear();
     deleteSlice = deleteQueue.newSlice();
    
-    segmentInfo = new SegmentInfo(directoryOrig, Constants.LUCENE_MAIN_VERSION, segmentName, -1, false, codec, null);
+    segmentInfo = new SegmentInfo(directoryOrig, Version.LATEST, segmentName, -1, false, codec, null, StringHelper.randomId());
     assert numDocsInRAM == 0;
     if (INFO_VERBOSE && infoStream.isEnabled("DWPT")) {
       infoStream.message("DWPT", Thread.currentThread().getName() + " init seg=" + segmentName + " delQueue=" + deleteQueue);  
@@ -218,11 +187,14 @@ class DocumentsWriterPerThread {
     // this should be the last call in the ctor 
     // it really sucks that we need to pull this within the ctor and pass this ref to the chain!
     consumer = indexWriterConfig.getIndexingChain().getChain(this);
-
   }
   
   void setAborting() {
     aborting = true;
+  }
+
+  public FieldInfos.Builder getFieldInfosBuilder() {
+    return fieldInfos;
   }
 
   boolean checkAndResetHasAborted() {
@@ -238,6 +210,16 @@ class DocumentsWriterPerThread {
     return true;
   }
 
+  /** Anything that will add N docs to the index should reserve first to
+   *  make sure it's allowed. */
+  private void reserveDoc() {
+    if (pendingNumDocs.incrementAndGet() > IndexWriter.getActualMaxDocs()) {
+      // Reserve failed
+      pendingNumDocs.decrementAndGet();
+      throw new IllegalStateException("number of documents in the index cannot exceed " + IndexWriter.getActualMaxDocs());
+    }
+  }
+
   public void updateDocument(IndexDocument doc, Analyzer analyzer, Term delTerm) throws IOException {
     assert testPoint("DocumentsWriterPerThread addDocument start");
     assert deleteQueue != null;
@@ -247,10 +229,17 @@ class DocumentsWriterPerThread {
     if (INFO_VERBOSE && infoStream.isEnabled("DWPT")) {
       infoStream.message("DWPT", Thread.currentThread().getName() + " update delTerm=" + delTerm + " docID=" + docState.docID + " seg=" + segmentInfo.name);
     }
+    // Even on exception, the document is still added (but marked
+    // deleted), so we don't need to un-reserve at that point.
+    // Aborting exceptions will actually "lose" more than one
+    // document, so the counter will be "wrong" in that case, but
+    // it's very hard to fix (we can't easily distinguish aborting
+    // vs non-aborting exceptions):
+    reserveDoc();
     boolean success = false;
     try {
       try {
-        consumer.processDocument(fieldInfos);
+        consumer.processDocument();
       } finally {
         docState.clear();
       }
@@ -264,15 +253,6 @@ class DocumentsWriterPerThread {
         } else {
           abort(filesToDelete);
         }
-      }
-    }
-    success = false;
-    try {
-      consumer.finishDocument();
-      success = true;
-    } finally {
-      if (!success) {
-        abort(filesToDelete);
       }
     }
     finishDocument(delTerm);
@@ -290,13 +270,20 @@ class DocumentsWriterPerThread {
     try {
       
       for(IndexDocument doc : docs) {
+        // Even on exception, the document is still added (but marked
+        // deleted), so we don't need to un-reserve at that point.
+        // Aborting exceptions will actually "lose" more than one
+        // document, so the counter will be "wrong" in that case, but
+        // it's very hard to fix (we can't easily distinguish aborting
+        // vs non-aborting exceptions):
+        reserveDoc();
         docState.doc = doc;
         docState.docID = numDocsInRAM;
         docCount++;
 
         boolean success = false;
         try {
-          consumer.processDocument(fieldInfos);
+          consumer.processDocument();
           success = true;
         } finally {
           if (!success) {
@@ -310,16 +297,6 @@ class DocumentsWriterPerThread {
             }
           }
         }
-        success = false;
-        try {
-          consumer.finishDocument();
-          success = true;
-        } finally {
-          if (!success) {
-            abort(filesToDelete);
-          }
-        }
-
         finishDocument(null);
       }
       allDocsIndexed = true;
@@ -466,9 +443,9 @@ class DocumentsWriterPerThread {
       pendingUpdates.terms.clear();
       segmentInfo.setFiles(new HashSet<>(directory.getCreatedFiles()));
 
-      final SegmentCommitInfo segmentInfoPerCommit = new SegmentCommitInfo(segmentInfo, 0, -1L, -1L);
+      final SegmentCommitInfo segmentInfoPerCommit = new SegmentCommitInfo(segmentInfo, 0, -1L, -1L, -1L);
       if (infoStream.isEnabled("DWPT")) {
-        infoStream.message("DWPT", "new segment has " + (flushState.liveDocs == null ? 0 : (flushState.segmentInfo.getDocCount() - flushState.delCountOnFlush)) + " deleted docs");
+        infoStream.message("DWPT", "new segment has " + (flushState.liveDocs == null ? 0 : flushState.delCountOnFlush) + " deleted docs");
         infoStream.message("DWPT", "new segment has " +
                            (flushState.fieldInfos.hasVectors() ? "vectors" : "no vectors") + "; " +
                            (flushState.fieldInfos.hasNorms() ? "norms" : "no norms") + "; " + 

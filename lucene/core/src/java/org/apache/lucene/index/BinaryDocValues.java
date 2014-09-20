@@ -28,16 +28,9 @@ public abstract class BinaryDocValues {
    * constructors, typically implicit.) */
   protected BinaryDocValues() {}
 
-  /** Lookup the value for document. */
-  public abstract void get(int docID, BytesRef result);
-  
-  /** An empty BinaryDocValues which returns {@link BytesRef#EMPTY_BYTES} for every document */
-  public static final BinaryDocValues EMPTY = new BinaryDocValues() {
-    @Override
-    public void get(int docID, BytesRef result) {
-      result.bytes = BytesRef.EMPTY_BYTES;
-      result.offset = 0;
-      result.length = 0;
-    }
-  };
+  /** Lookup the value for document.  The returned {@link BytesRef} may be
+   * re-used across calls to {@link #get(int)} so make sure to
+   * {@link BytesRef#deepCopyOf(BytesRef) copy it} if you want to keep it
+   * around. */
+  public abstract BytesRef get(int docID);
 }

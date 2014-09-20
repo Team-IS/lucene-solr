@@ -21,7 +21,7 @@ import com.spatial4j.core.context.SpatialContext;
 import com.spatial4j.core.shape.Point;
 import com.spatial4j.core.shape.Rectangle;
 import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.codecs.lucene45.Lucene45DocValuesFormat;
+import org.apache.lucene.codecs.lucene410.Lucene410DocValuesFormat;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -32,21 +32,27 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.uninverting.UninvertingReader;
+import org.apache.lucene.uninverting.UninvertingReader.Type;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.LuceneTestCase.SuppressSysoutChecks;
 import org.apache.lucene.util.TestUtil;
 import org.junit.After;
 import org.junit.Before;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 import static com.carrotsearch.randomizedtesting.RandomizedTest.randomGaussian;
 import static com.carrotsearch.randomizedtesting.RandomizedTest.randomIntBetween;
 
 /** A base test class for spatial lucene. It's mostly Lucene generic. */
+@SuppressSysoutChecks(bugUrl = "These tests use JUL extensively.")
 public abstract class SpatialTestCase extends LuceneTestCase {
 
   private DirectoryReader indexReader;
@@ -56,23 +62,29 @@ public abstract class SpatialTestCase extends LuceneTestCase {
 
   protected SpatialContext ctx;//subclass must initialize
 
+  protected Map<String,Type> uninvertMap = new HashMap<>();
+  
   @Override
   @Before
   public void setUp() throws Exception {
     super.setUp();
+    // TODO: change this module to index docvalues instead of uninverting
+    uninvertMap.clear();
+    uninvertMap.put("pointvector__x", Type.DOUBLE);
+    uninvertMap.put("pointvector__y", Type.DOUBLE);
 
     directory = newDirectory();
     final Random random = random();
     indexWriter = new RandomIndexWriter(random,directory, newIndexWriterConfig(random));
-    indexReader = indexWriter.getReader();
+    indexReader = UninvertingReader.wrap(indexWriter.getReader(), uninvertMap);
     indexSearcher = newSearcher(indexReader);
   }
 
   protected IndexWriterConfig newIndexWriterConfig(Random random) {
-    final IndexWriterConfig indexWriterConfig = LuceneTestCase.newIndexWriterConfig(random, LuceneTestCase.TEST_VERSION_CURRENT, new MockAnalyzer(random));
+    final IndexWriterConfig indexWriterConfig = LuceneTestCase.newIndexWriterConfig(random, new MockAnalyzer(random));
     //TODO can we randomly choose a doc-values supported format?
     if (needsDocValues())
-      indexWriterConfig.setCodec( TestUtil.alwaysDocValuesFormat(new Lucene45DocValuesFormat()));;
+      indexWriterConfig.setCodec( TestUtil.alwaysDocValuesFormat(new Lucene410DocValuesFormat()));;
     return indexWriterConfig;
   }
 
@@ -83,7 +95,8 @@ public abstract class SpatialTestCase extends LuceneTestCase {
   @Override
   @After
   public void tearDown() throws Exception {
-    IOUtils.close(indexWriter,indexReader,directory);
+    indexWriter.close();
+    IOUtils.close(indexReader,directory);
     super.tearDown();
   }
 
@@ -106,8 +119,11 @@ public abstract class SpatialTestCase extends LuceneTestCase {
 
   protected void commit() throws IOException {
     indexWriter.commit();
-    IOUtils.close(indexReader);
-    indexReader = indexWriter.getReader();
+    DirectoryReader newReader = DirectoryReader.openIfChanged(indexReader);
+    if (newReader != null) {
+      IOUtils.close(indexReader);
+      indexReader = newReader;
+    }
     indexSearcher = newSearcher(indexReader);
   }
 

@@ -45,11 +45,11 @@ public class TestRussianLightStemFilter extends BaseTokenStreamTestCase {
   
   /** Test against a vocabulary from the reference impl */
   public void testVocabulary() throws IOException {
-    assertVocabulary(analyzer, getDataFile("rulighttestdata.zip"), "rulight.txt");
+    assertVocabulary(analyzer, getDataPath("rulighttestdata.zip"), "rulight.txt");
   }
   
   public void testKeyword() throws IOException {
-    final CharArraySet exclusionSet = new CharArraySet(TEST_VERSION_CURRENT, asSet("энергии"), false);
+    final CharArraySet exclusionSet = new CharArraySet( asSet("энергии"), false);
     Analyzer a = new Analyzer() {
       @Override
       protected TokenStreamComponents createComponents(String fieldName) {

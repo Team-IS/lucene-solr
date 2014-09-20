@@ -33,7 +33,6 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
-import org.apache.lucene.util.TestUtil;
 
 /**
  * Simple test that adds numeric terms, where each term has the 
@@ -48,7 +47,7 @@ public class TestBagOfPostings extends LuceneTestCase {
 
     boolean isSimpleText = "SimpleText".equals(TestUtil.getPostingsFormat("field"));
 
-    IndexWriterConfig iwc = newIndexWriterConfig(random(), TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwc = newIndexWriterConfig(random(), new MockAnalyzer(random()));
 
     if ((isSimpleText || iwc.getMergePolicy() instanceof MockRandomMergePolicy) && (TEST_NIGHTLY || RANDOM_MULTIPLIER > 1)) {
       // Otherwise test can take way too long (> 2 hours)
@@ -70,7 +69,7 @@ public class TestBagOfPostings extends LuceneTestCase {
 
     final ConcurrentLinkedQueue<String> postings = new ConcurrentLinkedQueue<>(postingsList);
 
-    Directory dir = newFSDirectory(TestUtil.getTempDir("bagofpostings"));
+    Directory dir = newFSDirectory(createTempDir("bagofpostings"));
     final RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
 
     int threadCount = TestUtil.nextInt(random(), 1, 5);

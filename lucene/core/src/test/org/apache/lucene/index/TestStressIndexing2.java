@@ -25,8 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
-import junit.framework.Assert;
-
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.document.Document;
@@ -146,9 +144,11 @@ public class TestStressIndexing2 extends LuceneTestCase {
   
   public DocsAndWriter indexRandomIWReader(int nThreads, int iterations, int range, Directory dir) throws IOException, InterruptedException {
     Map<String,Document> docs = new HashMap<>();
-    IndexWriter w = RandomIndexWriter.mockIndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random())).setOpenMode(OpenMode.CREATE).setRAMBufferSizeMB(
-            0.1).setMaxBufferedDocs(maxBufferedDocs).setMergePolicy(newLogMergePolicy()), new YieldTestPoint());
+    IndexWriter w = RandomIndexWriter.mockIndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+            .setOpenMode(OpenMode.CREATE)
+            .setRAMBufferSizeMB(0.1)
+            .setMaxBufferedDocs(maxBufferedDocs)
+            .setMergePolicy(newLogMergePolicy()), new YieldTestPoint());
     w.commit();
     LogMergePolicy lmp = (LogMergePolicy) w.getConfig().getMergePolicy();
     lmp.setNoCFSRatio(0.0);
@@ -178,7 +178,7 @@ public class TestStressIndexing2 extends LuceneTestCase {
     }
 
     // w.forceMerge(1);
-    //w.close();    
+    //w.close();
 
     for (int i=0; i<threads.length; i++) {
       IndexingThread th = threads[i];
@@ -197,10 +197,13 @@ public class TestStressIndexing2 extends LuceneTestCase {
   public Map<String,Document> indexRandom(int nThreads, int iterations, int range, Directory dir, int maxThreadStates,
                                           boolean doReaderPooling) throws IOException, InterruptedException {
     Map<String,Document> docs = new HashMap<>();
-    IndexWriter w = RandomIndexWriter.mockIndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random())).setOpenMode(OpenMode.CREATE)
-             .setRAMBufferSizeMB(0.1).setMaxBufferedDocs(maxBufferedDocs).setIndexerThreadPool(new ThreadAffinityDocumentsWriterThreadPool(maxThreadStates))
-             .setReaderPooling(doReaderPooling).setMergePolicy(newLogMergePolicy()), new YieldTestPoint());
+    IndexWriter w = RandomIndexWriter.mockIndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+             .setOpenMode(OpenMode.CREATE)
+             .setRAMBufferSizeMB(0.1)
+             .setMaxBufferedDocs(maxBufferedDocs)
+             .setIndexerThreadPool(new DocumentsWriterPerThreadPool(maxThreadStates))
+             .setReaderPooling(doReaderPooling)
+             .setMergePolicy(newLogMergePolicy()), new YieldTestPoint());
     LogMergePolicy lmp = (LogMergePolicy) w.getConfig().getMergePolicy();
     lmp.setNoCFSRatio(0.0);
     lmp.setMergeFactor(mergeFactor);
@@ -223,7 +226,7 @@ public class TestStressIndexing2 extends LuceneTestCase {
     }
 
     //w.forceMerge(1);
-    w.close();    
+    w.close();
 
     for (int i=0; i<threads.length; i++) {
       IndexingThread th = threads[i];
@@ -240,7 +243,7 @@ public class TestStressIndexing2 extends LuceneTestCase {
 
   
   public static void indexSerial(Random random, Map<String,Document> docs, Directory dir) throws IOException {
-    IndexWriter w = new IndexWriter(dir, LuceneTestCase.newIndexWriterConfig(random, TEST_VERSION_CURRENT, new MockAnalyzer(random)).setMergePolicy(newLogMergePolicy()));
+    IndexWriter w = new IndexWriter(dir, LuceneTestCase.newIndexWriterConfig(random, new MockAnalyzer(random)).setMergePolicy(newLogMergePolicy()));
 
     // index all docs in a single thread
     Iterator<Document> iter = docs.values().iterator();
@@ -639,8 +642,8 @@ public class TestStressIndexing2 extends LuceneTestCase {
           int freq1 = dpEnum1.freq();
           int freq2 = dpEnum2.freq();
           assertEquals(freq1, freq2);
-          OffsetAttribute offsetAtt1 = dpEnum1.attributes().hasAttribute(OffsetAttribute.class) ? dpEnum1.attributes().getAttribute(OffsetAttribute.class) : null;
-          OffsetAttribute offsetAtt2 = dpEnum2.attributes().hasAttribute(OffsetAttribute.class) ? dpEnum2.attributes().getAttribute(OffsetAttribute.class) : null;
+          OffsetAttribute offsetAtt1 = dpEnum1.attributes().getAttribute(OffsetAttribute.class);
+          OffsetAttribute offsetAtt2 = dpEnum2.attributes().getAttribute(OffsetAttribute.class);
 
           if (offsetAtt1 != null) {
             assertNotNull(offsetAtt2);
@@ -773,24 +776,39 @@ public class TestStressIndexing2 extends LuceneTestCase {
       Field idField =  newField("id", idString, customType1);
       fields.add(idField);
 
+      Map<String,FieldType> tvTypes = new HashMap<>();
+
       int nFields = nextInt(maxFields);
       for (int i=0; i<nFields; i++) {
 
-        FieldType customType = new FieldType();
-        switch (nextInt(4)) {
-        case 0:
-          break;
-        case 1:
-          customType.setStoreTermVectors(true);
-          break;
-        case 2:
-          customType.setStoreTermVectors(true);
-          customType.setStoreTermVectorPositions(true);
-          break;
-        case 3:
-          customType.setStoreTermVectors(true);
-          customType.setStoreTermVectorOffsets(true);
-          break;
+        String fieldName = "f" + nextInt(100);
+        FieldType customType;
+
+        // Use the same term vector settings if we already
+        // added this field to the doc:
+        FieldType oldTVType = tvTypes.get(fieldName);
+        if (oldTVType != null) {
+          customType = new FieldType(oldTVType);
+        } else {
+          customType = new FieldType();
+          switch (nextInt(4)) {
+          case 0:
+            break;
+          case 1:
+            customType.setStoreTermVectors(true);
+            break;
+          case 2:
+            customType.setStoreTermVectors(true);
+            customType.setStoreTermVectorPositions(true);
+            break;
+          case 3:
+            customType.setStoreTermVectors(true);
+            customType.setStoreTermVectorOffsets(true);
+            break;
+          }
+          FieldType newType = new FieldType(customType);
+          newType.freeze();
+          tvTypes.put(fieldName, newType);
         }
         
         switch (nextInt(4)) {
@@ -798,26 +816,30 @@ public class TestStressIndexing2 extends LuceneTestCase {
             customType.setStored(true);
             customType.setOmitNorms(true);
             customType.setIndexed(true);
-            fields.add(newField("f" + nextInt(100), getString(1), customType));
+            customType.freeze();
+            fields.add(newField(fieldName, getString(1), customType));
             break;
           case 1:
             customType.setIndexed(true);
             customType.setTokenized(true);
-            fields.add(newField("f" + nextInt(100), getString(0), customType));
+            customType.freeze();
+            fields.add(newField(fieldName, getString(0), customType));
             break;
           case 2:
             customType.setStored(true);
             customType.setStoreTermVectors(false);
             customType.setStoreTermVectorOffsets(false);
             customType.setStoreTermVectorPositions(false);
-            fields.add(newField("f" + nextInt(100), getString(0), customType));
+            customType.freeze();
+            fields.add(newField(fieldName, getString(0), customType));
             break;
           case 3:
             customType.setStored(true);
             customType.setIndexed(true);
             customType.setTokenized(true);
-            fields.add(newField("f" + nextInt(100), getString(bigFieldSize), customType));
-            break;          
+            customType.freeze();
+            fields.add(newField(fieldName, getString(bigFieldSize), customType));
+            break;
         }
       }
 
@@ -872,8 +894,7 @@ public class TestStressIndexing2 extends LuceneTestCase {
           }
         }
       } catch (Throwable e) {
-        e.printStackTrace();
-        Assert.fail(e.toString());
+        throw new RuntimeException(e);
       }
 
       synchronized (this) {

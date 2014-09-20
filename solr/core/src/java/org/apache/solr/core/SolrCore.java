@@ -17,15 +17,104 @@
 
 package org.apache.solr.core;
 
+import org.apache.commons.io.FileUtils;
+import org.apache.lucene.codecs.Codec;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexDeletionPolicy;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.LockObtainFailedException;
+import org.apache.solr.cloud.CloudDescriptor;
+import org.apache.solr.common.SolrException;
+import org.apache.solr.common.cloud.ClusterState;
+import org.apache.solr.common.cloud.Slice;
+import org.apache.solr.common.params.CommonParams;
+import org.apache.solr.common.params.CommonParams.EchoParamStyle;
+import org.apache.solr.common.params.SolrParams;
+import org.apache.solr.common.util.ExecutorUtil;
+import org.apache.solr.common.util.NamedList;
+import org.apache.solr.common.util.SimpleOrderedMap;
+import org.apache.solr.core.DirectoryFactory.DirContext;
+import org.apache.solr.handler.SnapPuller;
+import org.apache.solr.handler.UpdateRequestHandler;
+import org.apache.solr.handler.admin.ShowFileRequestHandler;
+import org.apache.solr.handler.component.DebugComponent;
+import org.apache.solr.handler.component.ExpandComponent;
+import org.apache.solr.handler.component.FacetComponent;
+import org.apache.solr.handler.component.HighlightComponent;
+import org.apache.solr.handler.component.MoreLikeThisComponent;
+import org.apache.solr.handler.component.QueryComponent;
+import org.apache.solr.handler.component.RealTimeGetComponent;
+import org.apache.solr.handler.component.SearchComponent;
+import org.apache.solr.handler.component.StatsComponent;
+import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.request.SolrRequestHandler;
+import org.apache.solr.response.BinaryResponseWriter;
+import org.apache.solr.response.CSVResponseWriter;
+import org.apache.solr.response.JSONResponseWriter;
+import org.apache.solr.response.PHPResponseWriter;
+import org.apache.solr.response.PHPSerializedResponseWriter;
+import org.apache.solr.response.PythonResponseWriter;
+import org.apache.solr.response.QueryResponseWriter;
+import org.apache.solr.response.RawResponseWriter;
+import org.apache.solr.response.RubyResponseWriter;
+import org.apache.solr.response.SchemaXmlResponseWriter;
+import org.apache.solr.response.SolrQueryResponse;
+import org.apache.solr.response.SortingResponseWriter;
+import org.apache.solr.response.XMLResponseWriter;
+import org.apache.solr.response.transform.TransformerFactory;
+import org.apache.solr.rest.ManagedResourceStorage;
+import org.apache.solr.rest.ManagedResourceStorage.StorageIO;
+import org.apache.solr.rest.RestManager;
+import org.apache.solr.schema.FieldType;
+import org.apache.solr.schema.IndexSchema;
+import org.apache.solr.schema.IndexSchemaFactory;
+import org.apache.solr.schema.SimilarityFactory;
+import org.apache.solr.search.QParserPlugin;
+import org.apache.solr.search.SolrFieldCacheMBean;
+import org.apache.solr.search.SolrIndexSearcher;
+import org.apache.solr.search.ValueSourceParser;
+import org.apache.solr.update.DefaultSolrCoreState;
+import org.apache.solr.update.DirectUpdateHandler2;
+import org.apache.solr.update.SolrCoreState;
+import org.apache.solr.update.SolrCoreState.IndexWriterCloser;
+import org.apache.solr.update.SolrIndexWriter;
+import org.apache.solr.update.UpdateHandler;
+import org.apache.solr.update.VersionInfo;
+import org.apache.solr.update.processor.DistributedUpdateProcessorFactory;
+import org.apache.solr.update.processor.LogUpdateProcessorFactory;
+import org.apache.solr.update.processor.RunUpdateProcessorFactory;
+import org.apache.solr.update.processor.UpdateRequestProcessorChain;
+import org.apache.solr.update.processor.UpdateRequestProcessorFactory;
+import org.apache.solr.util.DefaultSolrThreadFactory;
+import org.apache.solr.util.IOUtils;
+import org.apache.solr.util.PropertiesInputStream;
+import org.apache.solr.util.RefCounted;
+import org.apache.solr.util.plugin.NamedListInitializedPlugin;
+import org.apache.solr.util.plugin.PluginInfoInitialized;
+import org.apache.solr.util.plugin.SolrCoreAware;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.xml.sax.SAXException;
+
+import javax.xml.parsers.ParserConfigurationException;
+
+import java.io.Closeable;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Writer;
 import java.lang.reflect.Constructor;
 import java.net.URL;
-import java.util.Arrays;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
@@ -50,94 +139,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
-import javax.xml.parsers.ParserConfigurationException;
-
-import org.apache.commons.io.IOUtils;
-import org.apache.lucene.codecs.Codec;
-import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.IndexDeletionPolicy;
-import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.IOContext;
-import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.store.LockObtainFailedException;
-import org.apache.solr.cloud.CloudDescriptor;
-import org.apache.solr.common.SolrException;
-import org.apache.solr.common.cloud.ClusterState;
-import org.apache.solr.common.cloud.Slice;
-import org.apache.solr.common.params.CommonParams;
-import org.apache.solr.common.params.CommonParams.EchoParamStyle;
-import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.util.ExecutorUtil;
-import org.apache.solr.common.util.NamedList;
-import org.apache.solr.common.util.SimpleOrderedMap;
-import org.apache.solr.core.DirectoryFactory.DirContext;
-import org.apache.solr.handler.SnapPuller;
-import org.apache.solr.handler.admin.ShowFileRequestHandler;
-import org.apache.solr.handler.component.AnalyticsComponent;
-import org.apache.solr.handler.component.DebugComponent;
-import org.apache.solr.handler.component.FacetComponent;
-import org.apache.solr.handler.component.HighlightComponent;
-import org.apache.solr.handler.component.MoreLikeThisComponent;
-import org.apache.solr.handler.component.QueryComponent;
-import org.apache.solr.handler.component.RealTimeGetComponent;
-import org.apache.solr.handler.component.SearchComponent;
-import org.apache.solr.handler.component.StatsComponent;
-import org.apache.solr.handler.component.ExpandComponent;
-import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.request.SolrRequestHandler;
-import org.apache.solr.response.BinaryResponseWriter;
-import org.apache.solr.response.CSVResponseWriter;
-import org.apache.solr.response.JSONResponseWriter;
-import org.apache.solr.response.PHPResponseWriter;
-import org.apache.solr.response.PHPSerializedResponseWriter;
-import org.apache.solr.response.PythonResponseWriter;
-import org.apache.solr.response.QueryResponseWriter;
-import org.apache.solr.response.RawResponseWriter;
-import org.apache.solr.response.RubyResponseWriter;
-import org.apache.solr.response.SchemaXmlResponseWriter;
-import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.response.XMLResponseWriter;
-import org.apache.solr.response.transform.TransformerFactory;
-import org.apache.solr.rest.ManagedResourceStorage;
-import org.apache.solr.rest.RestManager;
-import org.apache.solr.rest.ManagedResourceStorage.StorageIO;
-import org.apache.solr.schema.FieldType;
-import org.apache.solr.schema.IndexSchema;
-import org.apache.solr.schema.IndexSchemaFactory;
-import org.apache.solr.schema.SimilarityFactory;
-import org.apache.solr.search.QParserPlugin;
-import org.apache.solr.search.SolrFieldCacheMBean;
-import org.apache.solr.search.SolrIndexSearcher;
-import org.apache.solr.search.ValueSourceParser;
-import org.apache.solr.update.DefaultSolrCoreState;
-import org.apache.solr.update.DirectUpdateHandler2;
-import org.apache.solr.update.SolrCoreState;
-import org.apache.solr.update.SolrCoreState.IndexWriterCloser;
-import org.apache.solr.update.SolrIndexWriter;
-import org.apache.solr.update.UpdateHandler;
-import org.apache.solr.update.VersionInfo;
-import org.apache.solr.update.processor.DistributedUpdateProcessorFactory;
-import org.apache.solr.update.processor.LogUpdateProcessorFactory;
-import org.apache.solr.update.processor.RunUpdateProcessorFactory;
-import org.apache.solr.update.processor.UpdateRequestProcessorChain;
-import org.apache.solr.update.processor.UpdateRequestProcessorFactory;
-import org.apache.solr.util.DefaultSolrThreadFactory;
-import org.apache.solr.util.PropertiesInputStream;
-import org.apache.solr.util.RefCounted;
-import org.apache.solr.util.plugin.NamedListInitializedPlugin;
-import org.apache.solr.util.plugin.PluginInfoInitialized;
-import org.apache.solr.util.plugin.SolrCoreAware;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.xml.sax.SAXException;
-
-
 /**
  *
  */
-public final class SolrCore implements SolrInfoMBean {
+public final class SolrCore implements SolrInfoMBean, Closeable {
   public static final String version="1.0";  
 
   // These should *only* be used for debugging or monitoring purposes
@@ -158,6 +163,7 @@ public final class SolrCore implements SolrInfoMBean {
   private final SolrResourceLoader resourceLoader;
   private volatile IndexSchema schema;
   private final String dataDir;
+  private final String ulogDir;
   private final UpdateHandler updateHandler;
   private final SolrCoreState solrCoreState;
   
@@ -239,6 +245,10 @@ public final class SolrCore implements SolrInfoMBean {
     return dataDir;
   }
 
+  public String getUlogDir() {
+    return ulogDir;
+  }
+
   public String getIndexDir() {
     synchronized (searcherLock) {
       if (_searcher == null) return getNewIndexDir();
@@ -263,12 +273,17 @@ public final class SolrCore implements SolrInfoMBean {
     Directory dir = null;
     try {
       dir = getDirectoryFactory().get(getDataDir(), DirContext.META_DATA, getSolrConfig().indexConfig.lockType);
-      if (dir.fileExists(SnapPuller.INDEX_PROPERTIES)){
-        final IndexInput input = dir.openInput(SnapPuller.INDEX_PROPERTIES, IOContext.DEFAULT);
-  
+      IndexInput input;
+      try {
+        input = dir.openInput(SnapPuller.INDEX_PROPERTIES, IOContext.DEFAULT);
+      } catch (FileNotFoundException | NoSuchFileException e) {
+        input = null;
+      }
+
+      if (input != null) {
         final InputStream is = new PropertiesInputStream(input);
         try {
-          p.load(new InputStreamReader(is, "UTF-8"));
+          p.load(new InputStreamReader(is, StandardCharsets.UTF_8));
           
           String s = p.getProperty("index");
           if (s != null && s.trim().length() > 0) {
@@ -405,30 +420,23 @@ public final class SolrCore implements SolrInfoMBean {
   public QueryResponseWriter registerResponseWriter( String name, QueryResponseWriter responseWriter ){
     return responseWriters.put(name, responseWriter);
   }
-  
-  public SolrCore reload(SolrCore prev) throws IOException,
+
+  public SolrCore reload(ConfigSet coreConfig, SolrCore prev) throws IOException,
       ParserConfigurationException, SAXException {
-    return reload(prev.getResourceLoader(), prev);
-  }
-  
-  public SolrCore reload(SolrResourceLoader resourceLoader, SolrCore prev) throws IOException,
-      ParserConfigurationException, SAXException {
-    
-    SolrConfig config = new SolrConfig(resourceLoader, getSolrConfig().getName(), null);
-    
-    IndexSchema schema = IndexSchemaFactory.buildIndexSchema(getLatestSchema().getResourceName(), config);
     
     solrCoreState.increfSolrCoreState();
-    
-    if (!getNewIndexDir().equals(getIndexDir())) {
+    boolean indexDirChange = !getNewIndexDir().equals(getIndexDir());
+    if (indexDirChange || !coreConfig.getSolrConfig().nrtMode) {
       // the directory is changing, don't pass on state
       prev = null;
     }
     
-    SolrCore core = new SolrCore(getName(), getDataDir(), config,
-        schema, coreDescriptor, updateHandler, this.solrDelPolicy, prev);
+    SolrCore core = new SolrCore(getName(), getDataDir(), coreConfig.getSolrConfig(),
+        coreConfig.getIndexSchema(), coreDescriptor, updateHandler, this.solrDelPolicy, prev);
     core.solrDelPolicy = this.solrDelPolicy;
     
+
+    // we open a new indexwriter to pick up the latest config
     core.getUpdateHandler().getSolrCoreState().newIndexWriter(core, false);
     
     core.getSearcher(true, false, null, true);
@@ -639,6 +647,10 @@ public final class SolrCore implements SolrInfoMBean {
     this(name, dataDir, config, schema, cd, null, null, null);
   }
 
+  public SolrCore(CoreDescriptor cd, ConfigSet coreConfig) {
+    this(cd.getName(), null, coreConfig.getSolrConfig(), coreConfig.getIndexSchema(), cd, null, null, null);
+  }
+
 
   /**
    * Creates a new core that is to be loaded lazily. i.e. lazyLoad="true" in solr.xml
@@ -649,6 +661,7 @@ public final class SolrCore implements SolrInfoMBean {
     this.setName(name);
     this.schema = null;
     this.dataDir = null;
+    this.ulogDir = null;
     this.solrConfig = null;
     this.startTime = System.currentTimeMillis();
     this.maxWarmingSearchers = 2;  // we don't have a config yet, just pick a number.
@@ -682,7 +695,7 @@ public final class SolrCore implements SolrInfoMBean {
     if (updateHandler == null) {
       initDirectoryFactory();
     }
-    
+
     if (dataDir == null) {
       if (cd.usingDefaultDataDir()) dataDir = config.getDataDir();
       if (dataDir == null) {
@@ -696,8 +709,18 @@ public final class SolrCore implements SolrInfoMBean {
         }
       }
     }
-
     dataDir = SolrResourceLoader.normalizeDir(dataDir);
+
+    String updateLogDir = cd.getUlogDir();
+    if (updateLogDir == null) {
+      updateLogDir = dataDir;
+      if (new File(updateLogDir).isAbsolute() == false) {
+        updateLogDir = SolrResourceLoader.normalizeDir(cd.getInstanceDir()) + updateLogDir;
+      }
+    }
+    ulogDir = updateLogDir;
+
+
     log.info(logid+"Opening new SolrCore at " + resourceLoader.getInstanceDir() + ", dataDir="+dataDir);
 
     if (null != cd && null != cd.getCloudDescriptor()) {
@@ -780,7 +803,9 @@ public final class SolrCore implements SolrInfoMBean {
       // Processors initialized before the handlers
       updateProcessorChains = loadUpdateProcessorChains();
       reqHandlers = new RequestHandlers(this);
-      reqHandlers.initHandlersFromConfig(solrConfig);
+      List<PluginInfo> implicitReqHandlerInfo = new ArrayList<>();
+      UpdateRequestHandler.addImplicits(implicitReqHandlerInfo);
+      reqHandlers.initHandlersFromConfig(solrConfig, implicitReqHandlerInfo);
 
       // Handle things that should eventually go away
       initDeprecatedSupport();
@@ -851,7 +876,15 @@ public final class SolrCore implements SolrInfoMBean {
       if (e instanceof OutOfMemoryError) {
         throw (OutOfMemoryError)e;
       }
-      close();
+      
+      try {
+       this.close();
+      } catch (Throwable t) {
+        if (t instanceof OutOfMemoryError) {
+          throw (OutOfMemoryError)t;
+        }
+        log.error("Error while closing", t);
+      }
       
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, 
                               e.getMessage(), e);
@@ -1248,7 +1281,6 @@ public final class SolrCore implements SolrInfoMBean {
     addIfNotPresent(components,StatsComponent.COMPONENT_NAME,StatsComponent.class);
     addIfNotPresent(components,DebugComponent.COMPONENT_NAME,DebugComponent.class);
     addIfNotPresent(components,RealTimeGetComponent.COMPONENT_NAME,RealTimeGetComponent.class);
-    addIfNotPresent(components,AnalyticsComponent.COMPONENT_NAME,AnalyticsComponent.class);
     addIfNotPresent(components,ExpandComponent.COMPONENT_NAME,ExpandComponent.class);
 
     return components;
@@ -1448,7 +1480,7 @@ public final class SolrCore implements SolrInfoMBean {
       if (newestSearcher != null && (nrt || indexDirFile.equals(newIndexDirFile))) {
 
         DirectoryReader newReader;
-        DirectoryReader currentReader = newestSearcher.get().getIndexReader();
+        DirectoryReader currentReader = newestSearcher.get().getRawReader();
 
         // SolrCore.verbose("start reopen from",previousSearcher,"writer=",writer);
         
@@ -2042,6 +2074,7 @@ public final class SolrCore implements SolrInfoMBean {
     m.put("raw", new RawResponseWriter());
     m.put("javabin", new BinaryResponseWriter());
     m.put("csv", new CSVResponseWriter());
+    m.put("xsort", new SortingResponseWriter());
     m.put("schema.xml", new SchemaXmlResponseWriter());
     DEFAULT_RESPONSE_WRITERS = Collections.unmodifiableMap(m);
   }
@@ -2375,7 +2408,7 @@ public final class SolrCore implements SolrInfoMBean {
 
   @Override
   public String getSource() {
-    return "$URL$";
+    return null;
   }
 
   @Override
@@ -2417,6 +2450,65 @@ public final class SolrCore implements SolrInfoMBean {
   
   public Codec getCodec() {
     return codec;
+  }
+
+  public void unloadOnClose(boolean deleteIndexDir, boolean deleteDataDir, boolean deleteInstanceDir) {
+    if (deleteIndexDir) {
+      try {
+        directoryFactory.remove(getIndexDir());
+      } catch (Exception e) {
+        SolrException.log(log, "Failed to flag index dir for removal for core:" + name + " dir:" + getIndexDir());
+      }
+    }
+    if (deleteDataDir) {
+      try {
+        directoryFactory.remove(getDataDir(), true);
+      } catch (Exception e) {
+        SolrException.log(log, "Failed to flag data dir for removal for core:" + name + " dir:" + getDataDir());
+      }
+    }
+    if (deleteInstanceDir) {
+      addCloseHook(new CloseHook() {
+        @Override
+        public void preClose(SolrCore core) {
+        }
+
+        @Override
+        public void postClose(SolrCore core) {
+          CoreDescriptor cd = core.getCoreDescriptor();
+          if (cd != null) {
+            File instanceDir = new File(cd.getInstanceDir());
+            try {
+              FileUtils.deleteDirectory(instanceDir);
+            } catch (IOException e) {
+              SolrException.log(log, "Failed to delete instance dir for core:"
+                  + core.getName() + " dir:" + instanceDir.getAbsolutePath());
+            }
+          }
+        }
+      });
+    }
+  }
+
+  public static void deleteUnloadedCore(CoreDescriptor cd, boolean deleteDataDir, boolean deleteInstanceDir) {
+    if (deleteDataDir) {
+      File dataDir = new File(cd.getDataDir());
+      try {
+        FileUtils.deleteDirectory(dataDir);
+      } catch (IOException e) {
+        SolrException.log(log, "Failed to delete data dir for unloaded core:" + cd.getName()
+            + " dir:" + dataDir.getAbsolutePath());
+      }
+    }
+    if (deleteInstanceDir) {
+      File instanceDir = new File(cd.getInstanceDir());
+      try {
+        FileUtils.deleteDirectory(instanceDir);
+      } catch (IOException e) {
+        SolrException.log(log, "Failed to delete instance dir for unloaded core:" + cd.getName()
+            + " dir:" + instanceDir.getAbsolutePath());
+      }
+    }
   }
 
   public final class LazyQueryResponseWriterWrapper implements QueryResponseWriter {

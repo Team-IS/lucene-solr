@@ -33,6 +33,7 @@ import org.apache.lucene.index.IndexReaderContext;
 import org.apache.lucene.index.MultiReader;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.index.StoredFieldVisitor;
 import org.apache.lucene.search.DocIdSet;
@@ -362,6 +363,16 @@ public class TestDocSet extends LuceneTestCase {
       }
 
       @Override
+      public void addCoreClosedListener(CoreClosedListener listener) {
+        throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public void removeCoreClosedListener(CoreClosedListener listener) {
+        throw new UnsupportedOperationException();
+      }
+
+      @Override
       public FieldInfos getFieldInfos() {
         return new FieldInfos(new FieldInfo[0]);
       }
@@ -397,6 +408,11 @@ public class TestDocSet extends LuceneTestCase {
       }
       
       @Override
+      public SortedNumericDocValues getSortedNumericDocValues(String field) {
+        return null;
+      }
+      
+      @Override
       public SortedSetDocValues getSortedSetDocValues(String field) {
         return null;
       }
@@ -417,6 +433,10 @@ public class TestDocSet extends LuceneTestCase {
 
       @Override
       public void document(int doc, StoredFieldVisitor visitor) {
+      }
+
+      @Override
+      public void checkIntegrity() throws IOException {
       }
     };
   }

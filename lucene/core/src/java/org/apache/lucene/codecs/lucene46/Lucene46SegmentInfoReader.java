@@ -26,10 +26,10 @@ import org.apache.lucene.codecs.SegmentInfoReader;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.SegmentInfo;
+import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
-import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.Version;
 
 /**
  * Lucene 4.6 implementation of {@link SegmentInfoReader}.
@@ -46,38 +46,36 @@ public class Lucene46SegmentInfoReader extends SegmentInfoReader {
   @Override
   public SegmentInfo read(Directory dir, String segment, IOContext context) throws IOException {
     final String fileName = IndexFileNames.segmentFileName(segment, "", Lucene46SegmentInfoFormat.SI_EXTENSION);
-    final IndexInput input = dir.openInput(fileName, context);
-    boolean success = false;
-    try {
-      CodecUtil.checkHeader(input, Lucene46SegmentInfoFormat.CODEC_NAME,
-                                   Lucene46SegmentInfoFormat.VERSION_START,
-                                   Lucene46SegmentInfoFormat.VERSION_CURRENT);
-      final String version = input.readString();
+    try (ChecksumIndexInput input = dir.openChecksumInput(fileName, context)) {
+      int codecVersion = CodecUtil.checkHeader(input, Lucene46SegmentInfoFormat.CODEC_NAME,
+                                                      Lucene46SegmentInfoFormat.VERSION_START,
+                                                      Lucene46SegmentInfoFormat.VERSION_CURRENT);
+      final Version version = Version.parse(input.readString());
       final int docCount = input.readInt();
       if (docCount < 0) {
-        throw new CorruptIndexException("invalid docCount: " + docCount + " (resource=" + input + ")");
+        throw new CorruptIndexException("invalid docCount: " + docCount, input);
       }
       final boolean isCompoundFile = input.readByte() == SegmentInfo.YES;
       final Map<String,String> diagnostics = input.readStringStringMap();
       final Set<String> files = input.readStringSet();
       
-      if (input.getFilePointer() != input.length()) {
-        throw new CorruptIndexException("did not read all bytes from file \"" + fileName + "\": read " + input.getFilePointer() + " vs size " + input.length() + " (resource: " + input + ")");
+      String id;
+      if (codecVersion >= Lucene46SegmentInfoFormat.VERSION_ID) {
+        id = input.readString();
+      } else {
+        id = null;
       }
 
-      final SegmentInfo si = new SegmentInfo(dir, version, segment, docCount, isCompoundFile, null, diagnostics);
+      if (codecVersion >= Lucene46SegmentInfoFormat.VERSION_CHECKSUM) {
+        CodecUtil.checkFooter(input);
+      } else {
+        CodecUtil.checkEOF(input);
+      }
+
+      final SegmentInfo si = new SegmentInfo(dir, version, segment, docCount, isCompoundFile, null, diagnostics, id);
       si.setFiles(files);
 
-      success = true;
-
       return si;
-
-    } finally {
-      if (!success) {
-        IOUtils.closeWhileHandlingException(input);
-      } else {
-        input.close();
-      }
     }
   }
 }

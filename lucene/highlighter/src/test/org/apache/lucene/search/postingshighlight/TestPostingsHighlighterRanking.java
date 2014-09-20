@@ -43,10 +43,8 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.TestUtil;
 
-@SuppressCodecs({"MockFixedIntBlock", "MockVariableIntBlock", "MockSep", "MockRandom"})
 public class TestPostingsHighlighterRanking extends LuceneTestCase {
   /** 
    * indexes a bunch of gibberish, and then highlights top(n).
@@ -249,7 +247,7 @@ public class TestPostingsHighlighterRanking extends LuceneTestCase {
   /** sets b=0 to disable passage length normalization */
   public void testCustomB() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.SIMPLE, true));
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.SIMPLE, true));
     iwc.setMergePolicy(newLogMergePolicy());
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
     
@@ -287,7 +285,7 @@ public class TestPostingsHighlighterRanking extends LuceneTestCase {
   /** sets k1=0 for simple coordinate-level match (# of query terms present) */
   public void testCustomK1() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.SIMPLE, true));
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.SIMPLE, true));
     iwc.setMergePolicy(newLogMergePolicy());
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
     

@@ -67,8 +67,7 @@ public class TestLimitTokenCountAnalyzer extends BaseTokenStreamTestCase {
       mock.setEnableChecks(consumeAll);
       Analyzer a = new LimitTokenCountAnalyzer(mock, limit, consumeAll);
 
-      IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig
-                                           (TEST_VERSION_CURRENT, a));
+      IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(a));
 
       Document doc = new Document();
       StringBuilder b = new StringBuilder();

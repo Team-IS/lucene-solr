@@ -19,6 +19,7 @@ package org.apache.lucene.analysis.br;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.nio.charset.StandardCharsets;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
@@ -33,7 +34,6 @@ import org.apache.lucene.analysis.util.CharArraySet;
 import org.apache.lucene.analysis.util.StopwordAnalyzerBase;
 import org.apache.lucene.analysis.util.WordlistLoader;
 import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.Version;
 
 /**
  * {@link Analyzer} for Brazilian Portuguese language. 
@@ -43,7 +43,7 @@ import org.apache.lucene.util.Version;
  * not be stemmed, but indexed).
  * </p>
  *
- * <p><b>NOTE</b>: This class uses the same {@link Version}
+ * <p><b>NOTE</b>: This class uses the same {@link org.apache.lucene.util.Version}
  * dependent settings as {@link StandardAnalyzer}.</p>
  */
 public final class BrazilianAnalyzer extends StopwordAnalyzerBase {
@@ -64,7 +64,7 @@ public final class BrazilianAnalyzer extends StopwordAnalyzerBase {
     static {
       try {
         DEFAULT_STOP_SET = WordlistLoader.getWordSet(IOUtils.getDecodingReader(BrazilianAnalyzer.class, 
-            DEFAULT_STOPWORD_FILE, IOUtils.CHARSET_UTF_8), "#", Version.LUCENE_CURRENT);
+            DEFAULT_STOPWORD_FILE, StandardCharsets.UTF_8), "#");
       } catch (IOException ex) {
         // default set should always be present as it is part of the
         // distribution (JAR)
@@ -82,35 +82,29 @@ public final class BrazilianAnalyzer extends StopwordAnalyzerBase {
   /**
    * Builds an analyzer with the default stop words ({@link #getDefaultStopSet()}).
    */
-  public BrazilianAnalyzer(Version matchVersion) {
-    this(matchVersion, DefaultSetHolder.DEFAULT_STOP_SET);
+  public BrazilianAnalyzer() {
+    this(DefaultSetHolder.DEFAULT_STOP_SET);
   }
 
   /**
    * Builds an analyzer with the given stop words
    * 
-   * @param matchVersion
-   *          lucene compatibility version
    * @param stopwords
    *          a stopword set
    */
-  public BrazilianAnalyzer(Version matchVersion, CharArraySet stopwords) {
-     super(matchVersion, stopwords);
+  public BrazilianAnalyzer(CharArraySet stopwords) {
+     super(stopwords);
   }
 
   /**
    * Builds an analyzer with the given stop words and stemming exclusion words
    * 
-   * @param matchVersion
-   *          lucene compatibility version
    * @param stopwords
    *          a stopword set
    */
-  public BrazilianAnalyzer(Version matchVersion, CharArraySet stopwords,
-      CharArraySet stemExclusionSet) {
-    this(matchVersion, stopwords);
-    excltable = CharArraySet.unmodifiableSet(CharArraySet
-        .copy(matchVersion, stemExclusionSet));
+  public BrazilianAnalyzer(CharArraySet stopwords, CharArraySet stemExclusionSet) {
+    this(stopwords);
+    excltable = CharArraySet.unmodifiableSet(CharArraySet.copy(stemExclusionSet));
   }
 
   /**
@@ -125,10 +119,10 @@ public final class BrazilianAnalyzer extends StopwordAnalyzerBase {
    */
   @Override
   protected TokenStreamComponents createComponents(String fieldName) {
-    Tokenizer source = new StandardTokenizer(matchVersion);
-    TokenStream result = new LowerCaseFilter(matchVersion, source);
-    result = new StandardFilter(matchVersion, result);
-    result = new StopFilter(matchVersion, result, stopwords);
+    Tokenizer source = new StandardTokenizer();
+    TokenStream result = new LowerCaseFilter(source);
+    result = new StandardFilter(result);
+    result = new StopFilter(result, stopwords);
     if(excltable != null && !excltable.isEmpty())
       result = new SetKeywordMarkerFilter(result, excltable);
     return new TokenStreamComponents(source, new BrazilianStemFilter(result));

@@ -17,17 +17,21 @@ package org.apache.solr.spelling.suggest;
  * limitations under the License.
  */
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.lucene.search.spell.Dictionary;
-import org.apache.lucene.search.suggest.Lookup.LookupResult;
 import org.apache.lucene.search.suggest.Lookup;
+import org.apache.lucene.search.suggest.Lookup.LookupResult;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.IOUtils;
 import org.apache.solr.common.util.NamedList;
+import org.apache.solr.core.CloseHook;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.search.SolrIndexSearcher;
 import org.slf4j.Logger;
@@ -39,7 +43,7 @@ import org.slf4j.LoggerFactory;
  * Interacts (query/build/reload) with Lucene Suggesters through {@link Lookup} and
  * {@link Dictionary}
  * */
-public class SolrSuggester {
+public class SolrSuggester implements Accountable {
   private static final Logger LOG = LoggerFactory.getLogger(SolrSuggester.class);
   
   /** Name used when an unnamed suggester config is passed */
@@ -101,7 +105,22 @@ public class SolrSuggester {
     // initialize appropriate lookup instance
     factory = core.getResourceLoader().newInstance(lookupImpl, LookupFactory.class);
     lookup = factory.create(config, core);
-    
+    core.addCloseHook(new CloseHook() {
+      @Override
+      public void preClose(SolrCore core) {
+        if (lookup != null && lookup instanceof Closeable) {
+          try {
+            ((Closeable) lookup).close();
+          } catch (IOException e) {
+            LOG.warn("Could not close the suggester lookup.", e);
+          }
+        }
+      }
+      
+      @Override
+      public void postClose(SolrCore core) {}
+    });
+
     // if store directory is provided make it or load up the lookup with its content
     if (store != null) {
       storeDir = new File(store);
@@ -187,10 +206,15 @@ public class SolrSuggester {
   public String getName() {
     return name;
   }
+
+  @Override
+  public long ramBytesUsed() {
+    return lookup.ramBytesUsed();
+  }
   
-  /** Returns the size of the in-memory data structure used by the underlying lookup implementation */
-  public long sizeInBytes() {
-    return lookup.sizeInBytes();
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return lookup.getChildResources();
   }
   
   @Override
@@ -200,7 +224,7 @@ public class SolrSuggester {
         + "storeDir=" + ((storeDir == null) ? "" : storeDir.getAbsoluteFile()) + ", "
         + "lookupImpl=" + lookupImpl + ", "
         + "dictionaryImpl=" + dictionaryImpl + ", "
-        + "sizeInBytes=" + ((lookup!=null) ? String.valueOf(sizeInBytes()) : "0") + " ]";
+        + "sizeInBytes=" + ((lookup!=null) ? String.valueOf(ramBytesUsed()) : "0") + " ]";
   }
 
 }

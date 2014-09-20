@@ -24,6 +24,7 @@ import java.io.Reader;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.BaseTokenStreamTestCase;
+import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.core.KeywordTokenizer;
@@ -37,16 +38,15 @@ public class TestGalicianStemFilter extends BaseTokenStreamTestCase {
   private Analyzer analyzer = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      Tokenizer source = new StandardTokenizer(TEST_VERSION_CURRENT);
-      TokenStream result = new LowerCaseFilter(TEST_VERSION_CURRENT, source);
-      return new TokenStreamComponents(source, new GalicianStemFilter(result));
+      Tokenizer source = new MockTokenizer(MockTokenizer.WHITESPACE, false);
+      return new TokenStreamComponents(source, new GalicianStemFilter(source));
     }
   };
   
  
   /** Test against a vocabulary from the reference impl */
   public void testVocabulary() throws IOException {
-    assertVocabulary(analyzer, getDataFile("gltestdata.zip"), "gl.txt");
+    assertVocabulary(analyzer, getDataPath("gltestdata.zip"), "gl.txt");
   }
   
   public void testEmptyTerm() throws IOException {

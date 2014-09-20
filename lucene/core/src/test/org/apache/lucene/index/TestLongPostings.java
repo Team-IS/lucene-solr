@@ -34,7 +34,6 @@ import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.TestUtil;
-import org.apache.lucene.util.TestUtil;
 
 @SuppressCodecs({ "SimpleText", "Memory", "Direct" })
 public class TestLongPostings extends LuceneTestCase {
@@ -78,7 +77,7 @@ public class TestLongPostings extends LuceneTestCase {
   public void testLongPostings() throws Exception {
     // Don't use _TestUtil.getTempDir so that we own the
     // randomness (ie same seed will point to same dir):
-    Directory dir = newFSDirectory(TestUtil.getTempDir("longpostings" + "." + random().nextLong()));
+    Directory dir = newFSDirectory(createTempDir("longpostings" + "." + random().nextLong()));
 
     final int NUM_DOCS = atLeast(2000);
 
@@ -109,7 +108,7 @@ public class TestLongPostings extends LuceneTestCase {
     }
 
     final IndexReader r;
-    final IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+    final IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()))
       .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
       .setMergePolicy(newLogMergePolicy());
     iwc.setRAMBufferSizeMB(16.0 + 16.0 * random().nextDouble());
@@ -275,7 +274,7 @@ public class TestLongPostings extends LuceneTestCase {
   public void doTestLongPostingsNoPositions(IndexOptions options) throws Exception {
     // Don't use _TestUtil.getTempDir so that we own the
     // randomness (ie same seed will point to same dir):
-    Directory dir = newFSDirectory(TestUtil.getTempDir("longpostings" + "." + random().nextLong()));
+    Directory dir = newFSDirectory(createTempDir("longpostings" + "." + random().nextLong()));
 
     final int NUM_DOCS = atLeast(2000);
 
@@ -307,7 +306,7 @@ public class TestLongPostings extends LuceneTestCase {
 
     final IndexReader r;
     if (true) { 
-      final IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+      final IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()))
         .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
         .setMergePolicy(newLogMergePolicy());
       iwc.setRAMBufferSizeMB(16.0 + 16.0 * random().nextDouble());

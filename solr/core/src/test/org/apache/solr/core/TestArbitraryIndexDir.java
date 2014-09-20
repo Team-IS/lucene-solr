@@ -21,6 +21,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 
 import javax.xml.parsers.ParserConfigurationException;
@@ -33,7 +34,6 @@ import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.Version;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.handler.SnapPuller;
@@ -72,14 +72,11 @@ public class TestArbitraryIndexDir extends AbstractSolrTestCase{
   @Override
   public void setUp() throws Exception {
     super.setUp();
-
-    dataDir = new File(TEMP_DIR,
-        getClass().getName() + "-" + System.currentTimeMillis() + System.getProperty("file.separator") + "solr"
-        + System.getProperty("file.separator") + "data");
-    dataDir.mkdirs();
+    
+    File tmpDataDir = createTempDir().toFile();
 
     solrConfig = TestHarness.createConfig(getSolrHome(), "solrconfig.xml");
-    h = new TestHarness( dataDir.getAbsolutePath(),
+    h = new TestHarness( tmpDataDir.getAbsolutePath(),
         solrConfig,
         "schema12.xml");
     lrf = h.getRequestFactory
@@ -105,7 +102,7 @@ public class TestArbitraryIndexDir extends AbstractSolrTestCase{
     p.put("index", newDir.getName());
     Writer os = null;
     try {
-      os = new OutputStreamWriter(new FileOutputStream(idxprops), IOUtils.CHARSET_UTF_8);
+      os = new OutputStreamWriter(new FileOutputStream(idxprops), StandardCharsets.UTF_8);
       p.store(os, "index properties");
     } catch (Exception e) {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR,
@@ -115,10 +112,10 @@ public class TestArbitraryIndexDir extends AbstractSolrTestCase{
     }
 
     //add a doc in the new index dir
-    Directory dir = newFSDirectory(newDir);
+    Directory dir = newFSDirectory(newDir.toPath());
     IndexWriter iw = new IndexWriter(
         dir,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new StandardAnalyzer(TEST_VERSION_CURRENT))
+        new IndexWriterConfig(new StandardAnalyzer())
     );
     Document doc = new Document();
     doc.add(new TextField("id", "2", Field.Store.YES));
@@ -135,6 +132,5 @@ public class TestArbitraryIndexDir extends AbstractSolrTestCase{
         "*[count(//doc)=1]"
     );
     dir.close();
-    newDir.delete();
   }
 }

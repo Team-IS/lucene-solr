@@ -45,21 +45,11 @@ public class CachedIndexOutput extends ReusedBufferedIndexOutput {
     this.location = directory.getFileCacheLocation(name);
     this.cache = cache;
   }
-  
-  @Override
-  public void flushInternal() throws IOException {
-    dest.flush();
-  }
-  
+
   @Override
   public void closeInternal() throws IOException {
     dest.close();
     cache.renameCacheFile(location, directory.getFileCacheName(name));
-  }
-  
-  @Override
-  public void seekInternal(long pos) throws IOException {
-    throw new IOException("Seek not supported");
   }
   
   private int writeBlock(long position, byte[] b, int offset, int length)
@@ -88,5 +78,10 @@ public class CachedIndexOutput extends ReusedBufferedIndexOutput {
       offset += len;
     }
   }
-  
+
+  @Override
+  public long getChecksum() throws IOException {
+    flushBufferToCache();
+    return dest.getChecksum();
+  }
 }

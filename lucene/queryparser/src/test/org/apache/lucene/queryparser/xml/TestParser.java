@@ -36,7 +36,6 @@ import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.Version;
 import org.junit.AfterClass;
 import org.junit.Assume;
 import org.junit.BeforeClass;
@@ -45,6 +44,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 
@@ -63,9 +63,9 @@ public class TestParser extends LuceneTestCase {
     builder = new CorePlusExtensionsParser("contents", analyzer);
 
     BufferedReader d = new BufferedReader(new InputStreamReader(
-        TestParser.class.getResourceAsStream("reuters21578.txt"), "US-ASCII"));
+        TestParser.class.getResourceAsStream("reuters21578.txt"), StandardCharsets.US_ASCII));
     dir = newDirectory();
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(analyzer));
     String line = d.readLine();
     while (line != null) {
       int endOfDate = line.indexOf('\t');

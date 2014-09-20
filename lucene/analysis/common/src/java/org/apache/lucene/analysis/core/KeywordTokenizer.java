@@ -18,12 +18,11 @@ package org.apache.lucene.analysis.core;
  */
 
 import java.io.IOException;
-import java.io.Reader;
 
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.util.AttributeSource;
+import org.apache.lucene.util.AttributeFactory;
 
 /**
  * Emits the entire input as a single token.

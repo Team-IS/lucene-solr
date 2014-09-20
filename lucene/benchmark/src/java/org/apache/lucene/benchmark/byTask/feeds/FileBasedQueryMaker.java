@@ -6,9 +6,12 @@ import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.benchmark.byTask.tasks.NewAnalyzerTask;
 import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.Version;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -51,23 +54,23 @@ public class FileBasedQueryMaker extends AbstractQueryMaker implements QueryMake
     Analyzer anlzr = NewAnalyzerTask.createAnalyzer(config.get("analyzer",
             "org.apache.lucene.analysis.standard.StandardAnalyzer"));
     String defaultField = config.get("file.query.maker.default.field", DocMaker.BODY_FIELD);
-    QueryParser qp = new QueryParser(Version.LUCENE_CURRENT, defaultField, anlzr);
+    QueryParser qp = new QueryParser(defaultField, anlzr);
     qp.setAllowLeadingWildcard(true);
 
     List<Query> qq = new ArrayList<>();
     String fileName = config.get("file.query.maker.file", null);
     if (fileName != null)
     {
-      File file = new File(fileName);
+      Path path = Paths.get(fileName);
       Reader reader = null;
       // note: we use a decoding reader, so if your queries are screwed up you know
-      if (file.exists()) {
-        reader = IOUtils.getDecodingReader(file, IOUtils.CHARSET_UTF_8);
+      if (Files.exists(path)) {
+        reader = Files.newBufferedReader(path, StandardCharsets.UTF_8);
       } else {
         //see if we can find it as a resource
         InputStream asStream = FileBasedQueryMaker.class.getClassLoader().getResourceAsStream(fileName);
         if (asStream != null) {
-          reader = IOUtils.getDecodingReader(asStream, IOUtils.CHARSET_UTF_8);
+          reader = IOUtils.getDecodingReader(asStream, StandardCharsets.UTF_8);
         }
       }
       if (reader != null) {

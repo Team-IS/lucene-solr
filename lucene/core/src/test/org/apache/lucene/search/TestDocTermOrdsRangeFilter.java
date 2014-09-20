@@ -52,7 +52,7 @@ public class TestDocTermOrdsRangeFilter extends LuceneTestCase {
     dir = newDirectory();
     fieldName = random().nextBoolean() ? "field" : ""; // sometimes use an empty string as field name
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir, 
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.KEYWORD, false))
+        newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.KEYWORD, false))
         .setMaxBufferedDocs(TestUtil.nextInt(random(), 50, 1000)));
     List<String> terms = new ArrayList<>();
     int num = atLeast(200);
@@ -63,10 +63,7 @@ public class TestDocTermOrdsRangeFilter extends LuceneTestCase {
       for (int j = 0; j < numTerms; j++) {
         String s = TestUtil.randomUnicodeString(random());
         doc.add(newStringField(fieldName, s, Field.Store.NO));
-        // if the default codec doesn't support sortedset, we will uninvert at search time
-        if (defaultCodecSupportsSortedSet()) {
-          doc.add(new SortedSetDocValuesField(fieldName, new BytesRef(s)));
-        }
+        doc.add(new SortedSetDocValuesField(fieldName, new BytesRef(s)));
         terms.add(s);
       }
       writer.addDocument(doc);

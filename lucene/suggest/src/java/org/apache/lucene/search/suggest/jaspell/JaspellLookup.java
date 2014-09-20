@@ -20,15 +20,17 @@ package org.apache.lucene.search.suggest.jaspell;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.lucene.search.suggest.InputIterator;
 import org.apache.lucene.search.suggest.Lookup;
 import org.apache.lucene.search.suggest.jaspell.JaspellTernarySearchTrie.TSTNode;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.CharsRef;
-import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.UnicodeUtil;
 
 /**
@@ -36,8 +38,10 @@ import org.apache.lucene.util.UnicodeUtil;
  * <a href="http://jaspell.sourceforge.net/">JaSpell</a>.
  * 
  * @see JaspellTernarySearchTrie
+ * @deprecated Migrate to one of the newer suggesters which are much more RAM efficient.
  */
-public class JaspellLookup extends Lookup {
+@Deprecated
+public class JaspellLookup extends Lookup implements Accountable {
   JaspellTernarySearchTrie trie = new JaspellTernarySearchTrie();
   private boolean usePrefix = true;
   private int editDistance = 2;
@@ -56,19 +60,21 @@ public class JaspellLookup extends Lookup {
     if (iterator.hasPayloads()) {
       throw new IllegalArgumentException("this suggester doesn't support payloads");
     }
+    if (iterator.hasContexts()) {
+      throw new IllegalArgumentException("this suggester doesn't support contexts");
+    }
     count = 0;
     trie = new JaspellTernarySearchTrie();
     trie.setMatchAlmostDiff(editDistance);
     BytesRef spare;
-    final CharsRef charsSpare = new CharsRef();
+    final CharsRefBuilder charsSpare = new CharsRefBuilder();
 
     while ((spare = iterator.next()) != null) {
       final long weight = iterator.weight();
       if (spare.length == 0) {
         continue;
       }
-      charsSpare.grow(spare.length);
-      UnicodeUtil.UTF8toUTF16(spare.bytes, spare.offset, spare.length, charsSpare);
+      charsSpare.copyUTF8Bytes(spare);
       trie.put(charsSpare.toString(), Long.valueOf(weight));
       count++;
     }
@@ -95,7 +101,10 @@ public class JaspellLookup extends Lookup {
   }
 
   @Override
-  public List<LookupResult> lookup(CharSequence key, boolean onlyMorePopular, int num) {
+  public List<LookupResult> lookup(CharSequence key, Set<BytesRef> contexts, boolean onlyMorePopular, int num) {
+    if (contexts != null) {
+      throw new IllegalArgumentException("this suggester doesn't support contexts");
+    }
     List<LookupResult> res = new ArrayList<>();
     List<String> list;
     int count = onlyMorePopular ? num * 2 : num;
@@ -195,10 +204,9 @@ public class JaspellLookup extends Lookup {
     return true;
   }
 
-  /** Returns byte size of the underlying TST. */
   @Override
-  public long sizeInBytes() {
-    return trie.sizeInBytes();
+  public long ramBytesUsed() {
+    return trie.ramBytesUsed();
   }
   
   @Override

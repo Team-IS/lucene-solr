@@ -19,19 +19,21 @@ package org.apache.lucene.spatial.prefix;
 
 import com.spatial4j.core.shape.Shape;
 import com.spatial4j.core.shape.SpatialRelation;
+
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.spatial.prefix.tree.Cell;
+import org.apache.lucene.spatial.prefix.tree.CellIterator;
 import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.SentinelIntSet;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collection;
 
 /**
  * Finds docs where its indexed shape {@link org.apache.lucene.spatial.query.SpatialOperation#Contains
@@ -83,7 +85,8 @@ public class ContainsPrefixTreeFilter extends AbstractPrefixTreeFilter {
       super(context, acceptDocs);
     }
 
-    BytesRef termBytes = new BytesRef();
+    //The reused value of cell.getTokenBytesNoLeaf which is always then seek()'ed to. It's used in assertions too.
+    BytesRef termBytes = new BytesRef();//no leaf
     Cell nextCell;//see getLeafDocs
 
     /** This is the primary algorithm; recursive.  Returns null if finds none. */
@@ -103,8 +106,9 @@ public class ContainsPrefixTreeFilter extends AbstractPrefixTreeFilter {
         subCellsFilter = null;
         assert cell.getShape().relate(queryShape) == SpatialRelation.WITHIN;
       }
-      Collection <Cell> subCells = cell.getSubCells(subCellsFilter);
-      for (Cell subCell : subCells) {
+      CellIterator subCells = cell.getNextLevelCells(subCellsFilter);
+      while (subCells.hasNext()) {
+        Cell subCell = subCells.next();
         if (!seekExact(subCell))
           combinedSubResults = null;
         else if (subCell.getLevel() == detailLevel)
@@ -130,26 +134,28 @@ public class ContainsPrefixTreeFilter extends AbstractPrefixTreeFilter {
     }
 
     private boolean seekExact(Cell cell) throws IOException {
-      assert new BytesRef(cell.getTokenBytes()).compareTo(termBytes) > 0;
-      termBytes.bytes = cell.getTokenBytes();
-      termBytes.length = termBytes.bytes.length;
+      assert cell.getTokenBytesNoLeaf(null).compareTo(termBytes) > 0;
       if (termsEnum == null)
         return false;
+      termBytes = cell.getTokenBytesNoLeaf(termBytes);
+      assert assertCloneTermBytes(); //assertions look at termBytes later on
       return termsEnum.seekExact(termBytes);
     }
 
+    private boolean assertCloneTermBytes() {
+      termBytes = BytesRef.deepCopyOf(termBytes);
+      return true;
+    }
+
     private SmallDocSet getDocs(Cell cell, Bits acceptContains) throws IOException {
-      assert new BytesRef(cell.getTokenBytes()).equals(termBytes);
+      assert cell.getTokenBytesNoLeaf(null).equals(termBytes);
 
       return collectDocs(acceptContains);
     }
 
-    private Cell lastLeaf = null;//just for assertion
-
-    private SmallDocSet getLeafDocs(Cell leafCell, Bits acceptContains) throws IOException {
-      assert new BytesRef(leafCell.getTokenBytes()).equals(termBytes);
-      assert ! leafCell.equals(lastLeaf);//don't call for same leaf again
-      lastLeaf = leafCell;
+    /** Gets docs on the leaf of the given cell, _if_ there is a leaf cell, otherwise null. */
+    private SmallDocSet getLeafDocs(Cell cell, Bits acceptContains) throws IOException {
+      assert cell.getTokenBytesNoLeaf(null).equals(termBytes);
 
       if (termsEnum == null)
         return null;
@@ -158,8 +164,9 @@ public class ContainsPrefixTreeFilter extends AbstractPrefixTreeFilter {
         termsEnum = null;//signals all done
         return null;
       }
-      nextCell = grid.getCell(nextTerm.bytes, nextTerm.offset, nextTerm.length, nextCell);
-      if (nextCell.getLevel() == leafCell.getLevel() && nextCell.isLeaf()) {
+      nextCell = grid.readCell(nextTerm, nextCell);
+      assert cell.isPrefixOf(nextCell);
+      if (nextCell.getLevel() == cell.getLevel() && nextCell.isLeaf()) {
         return collectDocs(acceptContains);
       } else {
         return null;
@@ -292,6 +299,14 @@ public class ContainsPrefixTreeFilter extends AbstractPrefixTreeFilter {
           return size;
         }
       };
+    }
+
+    @Override
+    public long ramBytesUsed() {
+      return RamUsageEstimator.alignObjectSize(
+            RamUsageEstimator.NUM_BYTES_OBJECT_REF
+          + RamUsageEstimator.NUM_BYTES_INT)
+          + intSet.ramBytesUsed();
     }
 
   }//class SmallDocSet

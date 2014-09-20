@@ -27,6 +27,8 @@ import java.util.regex.Matcher;
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.TrackingDirectoryWrapper;
+import org.apache.lucene.util.StringHelper;
+import org.apache.lucene.util.Version;
 
 /**
  * Information about a segment such as it's name, directory, and files related
@@ -55,16 +57,19 @@ public final class SegmentInfo {
 
   private boolean isCompoundFile;
 
+  /** Id that uniquely identifies this segment. */
+  private final String id;
+
   private Codec codec;
 
   private Map<String,String> diagnostics;
-  
+
   // Tracks the Lucene version this segment was created with, since 3.1. Null
   // indicates an older than 3.0 index, and it's used to detect a too old index.
   // The format expected is "x.y" - "2.x" for pre-3.0 indexes (or null), and
-  // specific versions afterwards ("3.0", "3.1" etc.).
-  // see Constants.LUCENE_MAIN_VERSION.
-  private String version;
+  // specific versions afterwards ("3.0.0", "3.1.0" etc.).
+  // see o.a.l.util.Version.
+  private Version version;
 
   void setDiagnostics(Map<String, String> diagnostics) {
     this.diagnostics = diagnostics;
@@ -77,12 +82,22 @@ public final class SegmentInfo {
   }
 
   /**
+   * Construct a new complete SegmentInfo instance from
+   * input, with a newly generated random id.
+   */
+  public SegmentInfo(Directory dir, Version version, String name, int docCount,
+                     boolean isCompoundFile, Codec codec, Map<String,String> diagnostics) {
+    this(dir, version, name, docCount, isCompoundFile, codec, diagnostics, null);
+  }
+
+  /**
    * Construct a new complete SegmentInfo instance from input.
    * <p>Note: this is public only to allow access from
    * the codecs package.</p>
    */
-  public SegmentInfo(Directory dir, String version, String name, int docCount, 
-                     boolean isCompoundFile, Codec codec, Map<String,String> diagnostics) {
+  public SegmentInfo(Directory dir, Version version, String name, int docCount,
+                     boolean isCompoundFile, Codec codec, Map<String,String> diagnostics,
+                     String id) {
     assert !(dir instanceof TrackingDirectoryWrapper);
     this.dir = dir;
     this.version = version;
@@ -91,6 +106,7 @@ public final class SegmentInfo {
     this.isCompoundFile = isCompoundFile;
     this.codec = codec;
     this.diagnostics = diagnostics;
+    this.id = id;
   }
 
   /**
@@ -203,24 +219,15 @@ public final class SegmentInfo {
     return dir.hashCode() + name.hashCode();
   }
 
-  /**
-   * Used by DefaultSegmentInfosReader to upgrade a 3.0 segment to record its
-   * version is "3.0". This method can be removed when we're not required to
-   * support 3x indexes anymore, e.g. in 5.0.
-   * <p>
-   * <b>NOTE:</b> this method is used for internal purposes only - you should
-   * not modify the version of a SegmentInfo, or it may result in unexpected
-   * exceptions thrown when you attempt to open the index.
-   *
-   * @lucene.internal
+  /** Returns the version of the code which wrote the segment.
    */
-  public void setVersion(String version) {
-    this.version = version;
+  public Version getVersion() {
+    return version;
   }
 
-  /** Returns the version of the code which wrote the segment. */
-  public String getVersion() {
-    return version;
+  /** Return the id that uniquely identifies this segment. */
+  public String getId() {
+    return id;
   }
 
   private Set<String> setFiles;

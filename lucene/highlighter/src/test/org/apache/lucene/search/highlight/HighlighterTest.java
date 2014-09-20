@@ -19,13 +19,14 @@ package org.apache.lucene.search.highlight;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.Reader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
+
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
@@ -53,7 +54,7 @@ import org.apache.lucene.search.spans.*;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.automaton.BasicAutomata;
+import org.apache.lucene.util.automaton.Automata;
 import org.apache.lucene.util.automaton.CharacterRunAutomaton;
 import org.apache.lucene.util.automaton.RegExp;
 import org.w3c.dom.Element;
@@ -1338,7 +1339,7 @@ public class HighlighterTest extends BaseTokenStreamTestCase implements Formatte
       @Override
       public void run() throws Exception {
         String goodWord = "goodtoken";
-        CharacterRunAutomaton stopWords = new CharacterRunAutomaton(BasicAutomata.makeString("stoppedtoken"));
+        CharacterRunAutomaton stopWords = new CharacterRunAutomaton(Automata.makeString("stoppedtoken"));
         // we disable MockTokenizer checks because we will forcefully limit the 
         // tokenstream and call end() before incrementToken() returns false.
         final MockAnalyzer analyzer = new MockAnalyzer(random(), MockTokenizer.SIMPLE, true, stopWords);
@@ -1512,7 +1513,7 @@ public class HighlighterTest extends BaseTokenStreamTestCase implements Formatte
     // now an ugly built of XML parsing to test the snippet is encoded OK
     DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
     DocumentBuilder db = dbf.newDocumentBuilder();
-    org.w3c.dom.Document doc = db.parse(new ByteArrayInputStream(xhtml.getBytes("UTF-8")));
+    org.w3c.dom.Document doc = db.parse(new ByteArrayInputStream(xhtml.getBytes(StandardCharsets.UTF_8)));
     Element root = doc.getDocumentElement();
     NodeList nodes = root.getElementsByTagName("body");
     Element body = (Element) nodes.item(0);
@@ -1768,7 +1769,7 @@ public class HighlighterTest extends BaseTokenStreamTestCase implements Formatte
   }
   
   private void makeIndex() throws IOException {
-    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
     writer.addDocument( doc( "t_text1", "random words for highlighting tests del" ) );
     writer.addDocument( doc( "t_text1", "more random words for second field del" ) );
     writer.addDocument( doc( "t_text1", "random words for highlighting tests del" ) );
@@ -1778,7 +1779,7 @@ public class HighlighterTest extends BaseTokenStreamTestCase implements Formatte
   }
   
   private void deleteDocument() throws IOException {
-    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)).setOpenMode(OpenMode.APPEND));
+    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)).setOpenMode(OpenMode.APPEND));
     writer.deleteDocuments( new Term( "t_text1", "del" ) );
     // To see negative idf, keep comment the following line
     //writer.forceMerge(1);
@@ -1876,8 +1877,7 @@ public class HighlighterTest extends BaseTokenStreamTestCase implements Formatte
     analyzer = new MockAnalyzer(random(), MockTokenizer.SIMPLE, true, MockTokenFilter.ENGLISH_STOPSET);
     dir = newDirectory();
     ramDir = newDirectory();
-    IndexWriter writer = new IndexWriter(ramDir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.SIMPLE, true, MockTokenFilter.ENGLISH_STOPSET)));
+    IndexWriter writer = new IndexWriter(ramDir, newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.SIMPLE, true, MockTokenFilter.ENGLISH_STOPSET)));
     for (String text : texts) {
       addDoc(writer, text);
     }
@@ -2011,7 +2011,8 @@ final class SynonymTokenizer extends TokenStream {
       }
       st = new StringTokenizer(expansions, ",");
       if (st.hasMoreTokens()) {
-        currentRealToken = new Token(realOffsetAtt.startOffset(), realOffsetAtt.endOffset());
+        currentRealToken = new Token();
+        currentRealToken.setOffset(realOffsetAtt.startOffset(), realOffsetAtt.endOffset());
         currentRealToken.copyBuffer(realTermAtt.buffer(), 0, realTermAtt.length());
       }
       

@@ -158,7 +158,7 @@ public class SpellCheckComponent extends SearchComponent implements SolrCoreAwar
         boolean extendedResults = params.getBool(SPELLCHECK_EXTENDED_RESULTS, false); 
         boolean collate = params.getBool(SPELLCHECK_COLLATE, false);
         float accuracy = params.getFloat(SPELLCHECK_ACCURACY, Float.MIN_VALUE);
-        Integer alternativeTermCount = params.getInt(SpellingParams.SPELLCHECK_ALTERNATIVE_TERM_COUNT); 
+        int alternativeTermCount = params.getInt(SpellingParams.SPELLCHECK_ALTERNATIVE_TERM_COUNT, 0); 
         Integer maxResultsForSuggest = params.getInt(SpellingParams.SPELLCHECK_MAX_RESULTS_FOR_SUGGEST);
         ModifiableSolrParams customParams = new ModifiableSolrParams();
         for (String checkerName : getDictionaryNames(params)) {
@@ -177,7 +177,7 @@ public class SpellCheckComponent extends SearchComponent implements SolrCoreAwar
           SuggestMode suggestMode = SuggestMode.SUGGEST_WHEN_NOT_IN_INDEX;
           if (onlyMorePopular) {
             suggestMode = SuggestMode.SUGGEST_MORE_POPULAR;
-          } else if (alternativeTermCount != null) {
+          } else if (alternativeTermCount > 0) {
             suggestMode = SuggestMode.SUGGEST_ALWAYS;
           }
           
@@ -190,13 +190,21 @@ public class SpellCheckComponent extends SearchComponent implements SolrCoreAwar
           spellingResult = new SpellingResult();
         }
         boolean isCorrectlySpelled = hits > (maxResultsForSuggest==null ? 0 : maxResultsForSuggest);
-        NamedList suggestions = toNamedList(shardRequest, spellingResult, q,
-            extendedResults, collate, isCorrectlySpelled);
-        if (collate) {
-          addCollationsToResponse(params, spellingResult, rb, q, suggestions, spellChecker.isSuggestionsMayOverlap());
-        }
-        NamedList response = new SimpleOrderedMap();
+        
+        NamedList response = new SimpleOrderedMap();        
+        NamedList suggestions = toNamedList(shardRequest, spellingResult, q, extendedResults);
         response.add("suggestions", suggestions);
+        
+        if (extendedResults) {
+          response.add("correctlySpelled", isCorrectlySpelled);
+        }        
+        if (collate) {
+          addCollationsToResponse(params, spellingResult, rb, q, response, spellChecker.isSuggestionsMayOverlap());
+        }
+        if (shardRequest) {
+          addOriginalTermsToResponse(response, tokens);
+        }
+        
         rb.rsp.add("spellcheck", response);
 
       } else {
@@ -232,9 +240,10 @@ public class SpellCheckComponent extends SearchComponent implements SolrCoreAwar
     //even in cases when the internal rank is the same.
     Collections.sort(collations);
 
+    NamedList collationList = new NamedList();
     for (SpellCheckCollation collation : collations) {
       if (collationExtendedResults) {
-        NamedList extendedResult = new NamedList();
+        NamedList extendedResult = new SimpleOrderedMap();
         extendedResult.add("collationQuery", collation.getCollationQuery());
         extendedResult.add("hits", collation.getHits());
         extendedResult.add("misspellingsAndCorrections", collation.getMisspellingsAndCorrections());
@@ -242,15 +251,23 @@ public class SpellCheckComponent extends SearchComponent implements SolrCoreAwar
         {
           extendedResult.add("collationInternalRank", collation.getInternalRank());
         }
-        response.add("collation", extendedResult);
+        collationList.add("collation", extendedResult);
       } else {
-        response.add("collation", collation.getCollationQuery());
-        if(maxCollationTries>0 && shard)
-        {
-          response.add("collationInternalRank", collation.getInternalRank());
+        collationList.add("collation", collation.getCollationQuery());
+        if (maxCollationTries>0 && shard) {
+          collationList.add("collationInternalRank", collation.getInternalRank());
         }
       }
     }
+    response.add("collations", collationList);
+  }
+  
+  private void addOriginalTermsToResponse(NamedList response, Collection<Token> originalTerms) {
+    List<String> originalTermStr = new ArrayList<String>();
+    for(Token t : originalTerms) {
+      originalTermStr.add(t.toString());
+    }
+    response.add("originalTerms", originalTermStr);
   }
 
   /**
@@ -346,36 +363,52 @@ public class SpellCheckComponent extends SearchComponent implements SolrCoreAwar
     SpellingResult result = checker.mergeSuggestions(mergeData, numSug, count, extendedResults);
     
     NamedList response = new SimpleOrderedMap();
-    NamedList suggestions = toNamedList(false, result, origQuery,
-        extendedResults, collate, isCorrectlySpelled);
+    
+    NamedList suggestions = toNamedList(false, result, origQuery, extendedResults);
+    response.add("suggestions", suggestions);
+
+    if (extendedResults) {
+      response.add("correctlySpelled", isCorrectlySpelled);     
+    }
+    
     if (collate) {
       SpellCheckCollation[] sortedCollations = mergeData.collations.values()
           .toArray(new SpellCheckCollation[mergeData.collations.size()]);
       Arrays.sort(sortedCollations);
+      
+      NamedList collations = new NamedList();
       int i = 0;
       while (i < maxCollations && i < sortedCollations.length) {
         SpellCheckCollation collation = sortedCollations[i];
         i++;
         if (collationExtendedResults) {
-          NamedList extendedResult = new NamedList();
+          SimpleOrderedMap extendedResult = new SimpleOrderedMap();
           extendedResult.add("collationQuery", collation.getCollationQuery());
           extendedResult.add("hits", collation.getHits());
           extendedResult.add("misspellingsAndCorrections", collation
               .getMisspellingsAndCorrections());
-          suggestions.add("collation", extendedResult);
+          collations.add("collation", extendedResult);
         } else {
-          suggestions.add("collation", collation.getCollationQuery());
+          collations.add("collation", collation.getCollationQuery());
         }
       }
+      
+      response.add("collations", collations);
     }
     
-    response.add("suggestions", suggestions);
     rb.rsp.add("spellcheck", response);
   }
     
   @SuppressWarnings("unchecked")
   private void collectShardSuggestions(NamedList nl, SpellCheckMergeData mergeData) {
-    SpellCheckResponse spellCheckResp = new SpellCheckResponse(nl);
+    SpellCheckResponse spellCheckResp = new SpellCheckResponse(nl);    
+    Iterable<Object> originalTermStrings = (Iterable<Object>) nl.get("originalTerms");
+    if(originalTermStrings!=null) {
+      mergeData.originalTerms = new HashSet<>();
+      for (Object originalTermObj : originalTermStrings) {
+        mergeData.originalTerms.add(originalTermObj.toString());
+      }
+    }
     for (SpellCheckResponse.Suggestion suggestion : spellCheckResp.getSuggestions()) {
       mergeData.origVsSuggestion.put(suggestion.getToken(), suggestion);
       HashSet<String> suggested = mergeData.origVsSuggested.get(suggestion.getToken());
@@ -422,10 +455,10 @@ public class SpellCheckComponent extends SearchComponent implements SolrCoreAwar
   @SuppressWarnings("unchecked")
   private void collectShardCollations(SpellCheckMergeData mergeData, NamedList spellCheckResponse, int maxCollationTries) {
     Map<String, SpellCheckCollation> collations = mergeData.collations;
-    NamedList suggestions = (NamedList) spellCheckResponse.get("suggestions");
-    if(suggestions != null) {
-      List<Object> collationList = suggestions.getAll("collation");
-      List<Object> collationRankList = suggestions.getAll("collationInternalRank");
+    NamedList collationHolder = (NamedList) spellCheckResponse.get("collations");
+    if(collationHolder != null) {
+      List<Object> collationList = collationHolder.getAll("collation");
+      List<Object> collationRankList = collationHolder.getAll("collationInternalRank");
       int i=0;
       if(collationList != null) {
         for(Object o : collationList)
@@ -542,8 +575,7 @@ public class SpellCheckComponent extends SearchComponent implements SolrCoreAwar
   }
 
   protected NamedList toNamedList(boolean shardRequest,
-      SpellingResult spellingResult, String origQuery, boolean extendedResults,
-      boolean collate, boolean correctlySpelled) {
+      SpellingResult spellingResult, String origQuery, boolean extendedResults) {
     NamedList result = new NamedList();
     Map<Token,LinkedHashMap<String,Integer>> suggestions = spellingResult
         .getSuggestions();
@@ -598,17 +630,13 @@ public class SpellCheckComponent extends SearchComponent implements SolrCoreAwar
         }
         
         if (hasFreqInfo) {
-          int tokenFrequency = spellingResult.getTokenFrequency(inputToken);
-          if (tokenFrequency == 0) {
+          Integer tokenFrequency = spellingResult.getTokenFrequency(inputToken);
+          if (tokenFrequency==null || tokenFrequency == 0) {
             hasZeroFrequencyToken = true;
           }
         }
         result.add(tokenString, suggestionList);
       }
-    }
-    
-    if (extendedResults) {
-      result.add("correctlySpelled", correctlySpelled);     
     }
     return result;
   }
@@ -675,7 +703,7 @@ public class SpellCheckComponent extends SearchComponent implements SolrCoreAwar
         IndexSchema schema = core.getLatestSchema();
         String fieldTypeName = (String) initParams.get("queryAnalyzerFieldType");
         FieldType fieldType = schema.getFieldTypes().get(fieldTypeName);
-        Analyzer analyzer = fieldType == null ? new WhitespaceAnalyzer(core.getSolrConfig().luceneMatchVersion)
+        Analyzer analyzer = fieldType == null ? new WhitespaceAnalyzer()
                 : fieldType.getQueryAnalyzer();
         //TODO: There's got to be a better way!  Where's Spring when you need it?
         queryConverter.setAnalyzer(analyzer);
@@ -758,10 +786,4 @@ public class SpellCheckComponent extends SearchComponent implements SolrCoreAwar
   public String getDescription() {
     return "A Spell Checker component";
   }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
-  }
-
 }

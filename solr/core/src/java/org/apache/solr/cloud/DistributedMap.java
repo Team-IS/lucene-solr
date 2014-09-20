@@ -27,6 +27,7 @@ import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.data.ACL;
+import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,7 +47,6 @@ public class DistributedMap {
   private final String dir;
 
   private SolrZkClient zookeeper;
-  private List<ACL> acl = ZooDefs.Ids.OPEN_ACL_UNSAFE;
 
   private final String prefix = "mn-";
 
@@ -65,9 +65,6 @@ public class DistributedMap {
       throw new SolrException(ErrorCode.SERVER_ERROR, e);
     }
 
-    if (acl != null) {
-      this.acl = acl;
-    }
     this.zookeeper = zookeeper;
   }
 
@@ -112,10 +109,10 @@ public class DistributedMap {
       throws KeeperException, InterruptedException {
       for (;;) {
       try {
-        return zookeeper.create(path, data, acl, mode, true);
+        return zookeeper.create(path, data, mode, true);
       } catch (KeeperException.NoNodeException e) {
         try {
-          zookeeper.create(dir, new byte[0], acl, CreateMode.PERSISTENT, true);
+          zookeeper.create(dir, new byte[0], CreateMode.PERSISTENT, true);
         } catch (KeeperException.NodeExistsException ne) {
           // someone created it
         }
@@ -158,6 +155,12 @@ public class DistributedMap {
 
   public boolean contains(String trackingId) throws KeeperException, InterruptedException {
     return zookeeper.exists(dir + "/" + prefix + trackingId, true);
+  }
+
+  public int size() throws KeeperException, InterruptedException {
+    Stat stat = new Stat();
+    zookeeper.getData(dir, null, stat, true);
+    return stat.getNumChildren();
   }
 
   public void remove(String trackingId) throws KeeperException, InterruptedException {

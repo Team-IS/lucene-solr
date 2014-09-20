@@ -49,11 +49,11 @@ public class TestPorterStemFilter extends BaseTokenStreamTestCase {
    * The output should be the same as the string in output.txt
    */
   public void testPorterStemFilter() throws Exception {
-    assertVocabulary(a, getDataFile("porterTestData.zip"), "voc.txt", "output.txt");
+    assertVocabulary(a, getDataPath("porterTestData.zip"), "voc.txt", "output.txt");
   }
   
   public void testWithKeywordAttribute() throws IOException {
-    CharArraySet set = new CharArraySet(TEST_VERSION_CURRENT, 1, true);
+    CharArraySet set = new CharArraySet( 1, true);
     set.add("yourselves");
     Tokenizer tokenizer = new MockTokenizer(MockTokenizer.WHITESPACE, false);
     tokenizer.setReader(new StringReader("yourselves yours"));

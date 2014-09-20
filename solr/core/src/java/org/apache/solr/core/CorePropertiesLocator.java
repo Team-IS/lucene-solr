@@ -17,7 +17,6 @@ package org.apache.solr.core;
  * limitations under the License.
  */
 
-import com.google.common.base.Charsets;
 import com.google.common.collect.Lists;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.util.IOUtils;
@@ -31,6 +30,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Properties;
 
@@ -79,7 +79,7 @@ public class CorePropertiesLocator implements CoresLocator {
     Writer os = null;
     try {
       propfile.getParentFile().mkdirs();
-      os = new OutputStreamWriter(new FileOutputStream(propfile), Charsets.UTF_8);
+      os = new OutputStreamWriter(new FileOutputStream(propfile), StandardCharsets.UTF_8);
       p.store(os, "Written by CorePropertiesLocator");
     }
     catch (IOException e) {
@@ -120,15 +120,20 @@ public class CorePropertiesLocator implements CoresLocator {
   public List<CoreDescriptor> discover(CoreContainer cc) {
     logger.info("Looking for core definitions underneath {}", rootDirectory.getAbsolutePath());
     List<CoreDescriptor> cds = Lists.newArrayList();
+    if (rootDirectory.canRead() == false) {
+      throw new RuntimeException("Solr home '" + rootDirectory.getAbsolutePath() + "' doesn't have read permissions");
+    }
     discoverUnder(rootDirectory, cds, cc);
     logger.info("Found {} core definitions", cds.size());
     return cds;
   }
 
   private void discoverUnder(File root, List<CoreDescriptor> cds, CoreContainer cc) {
-    if (!root.exists())
-      return;
     for (File child : root.listFiles()) {
+      if (child.canRead() == false) {
+        logger.warn("Cannot read directory or file during core discovery '" +  child.getAbsolutePath() + "' during core discovery. Skipping");
+        continue;
+      }
       File propertiesFile = new File(child, PROPERTIES_FILENAME);
       if (propertiesFile.exists()) {
         CoreDescriptor cd = buildCoreDescriptor(propertiesFile, cc);
@@ -147,7 +152,7 @@ public class CorePropertiesLocator implements CoresLocator {
       File instanceDir = propertiesFile.getParentFile();
       Properties coreProperties = new Properties();
       fis = new FileInputStream(propertiesFile);
-      coreProperties.load(new InputStreamReader(fis, Charsets.UTF_8));
+      coreProperties.load(new InputStreamReader(fis, StandardCharsets.UTF_8));
       String name = createName(coreProperties, instanceDir);
       return new CoreDescriptor(cc, name, instanceDir.getAbsolutePath(), coreProperties);
     }

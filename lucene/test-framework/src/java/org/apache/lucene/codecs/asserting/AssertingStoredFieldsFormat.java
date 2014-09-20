@@ -30,6 +30,8 @@ import org.apache.lucene.index.StorableField;
 import org.apache.lucene.index.StoredFieldVisitor;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Just like {@link Lucene41StoredFieldsFormat} but with additional asserts.
@@ -54,6 +56,10 @@ public class AssertingStoredFieldsFormat extends StoredFieldsFormat {
     AssertingStoredFieldsReader(StoredFieldsReader in, int maxDoc) {
       this.in = in;
       this.maxDoc = maxDoc;
+      // do a few simple checks on init
+      assert toString() != null;
+      assert ramBytesUsed() >= 0;
+      assert getChildResources() != null;
     }
     
     @Override
@@ -74,7 +80,26 @@ public class AssertingStoredFieldsFormat extends StoredFieldsFormat {
 
     @Override
     public long ramBytesUsed() {
-      return in.ramBytesUsed();
+      long v = in.ramBytesUsed();
+      assert v >= 0;
+      return v;
+    }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      Iterable<? extends Accountable> res = in.getChildResources();
+      TestUtil.checkIterator(res.iterator());
+      return res;
+    }
+
+    @Override
+    public void checkIntegrity() throws IOException {
+      in.checkIntegrity();
+    }
+
+    @Override
+    public String toString() {
+      return getClass().getSimpleName() + "(" + in.toString() + ")";
     }
   }
 
@@ -85,7 +110,6 @@ public class AssertingStoredFieldsFormat extends StoredFieldsFormat {
   static class AssertingStoredFieldsWriter extends StoredFieldsWriter {
     private final StoredFieldsWriter in;
     private int numWritten;
-    private int fieldCount;
     private Status docStatus;
     
     AssertingStoredFieldsWriter(StoredFieldsWriter in) {
@@ -94,11 +118,9 @@ public class AssertingStoredFieldsFormat extends StoredFieldsFormat {
     }
 
     @Override
-    public void startDocument(int numStoredFields) throws IOException {
+    public void startDocument() throws IOException {
       assert docStatus != Status.STARTED;
-      in.startDocument(numStoredFields);
-      assert fieldCount == 0;
-      fieldCount = numStoredFields;
+      in.startDocument();
       numWritten++;
       docStatus = Status.STARTED;
     }
@@ -106,7 +128,6 @@ public class AssertingStoredFieldsFormat extends StoredFieldsFormat {
     @Override
     public void finishDocument() throws IOException {
       assert docStatus == Status.STARTED;
-      assert fieldCount == 0;
       in.finishDocument();
       docStatus = Status.FINISHED;
     }
@@ -115,8 +136,6 @@ public class AssertingStoredFieldsFormat extends StoredFieldsFormat {
     public void writeField(FieldInfo info, StorableField field) throws IOException {
       assert docStatus == Status.STARTED;
       in.writeField(info, field);
-      assert fieldCount > 0;
-      fieldCount--;
     }
 
     @Override
@@ -128,7 +147,6 @@ public class AssertingStoredFieldsFormat extends StoredFieldsFormat {
     public void finish(FieldInfos fis, int numDocs) throws IOException {
       assert docStatus == (numDocs > 0 ? Status.FINISHED : Status.UNDEFINED);
       in.finish(fis, numDocs);
-      assert fieldCount == 0;
       assert numDocs == numWritten;
     }
 

@@ -1,4 +1,5 @@
 package org.apache.lucene.index;
+
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -22,6 +23,7 @@ import org.apache.lucene.document.Field;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.Version;
 
 public class TestMultiPassIndexSplitter extends LuceneTestCase {
   IndexReader input;
@@ -32,7 +34,7 @@ public class TestMultiPassIndexSplitter extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     dir = newDirectory();
-    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(NoMergePolicy.COMPOUND_FILES));
+    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(NoMergePolicy.INSTANCE));
     Document doc;
     for (int i = 0; i < NUM_DOCS; i++) {
       doc = new Document();
@@ -64,7 +66,7 @@ public class TestMultiPassIndexSplitter extends LuceneTestCase {
             newDirectory(),
             newDirectory()
     };
-    splitter.split(TEST_VERSION_CURRENT, input, dirs, false);
+    splitter.split(Version.LATEST, input, dirs, false);
     IndexReader ir;
     ir = DirectoryReader.open(dirs[0]);
     assertTrue(ir.numDocs() - NUM_DOCS / 3 <= 1); // rounding error
@@ -109,7 +111,7 @@ public class TestMultiPassIndexSplitter extends LuceneTestCase {
             newDirectory(),
             newDirectory()
     };
-    splitter.split(TEST_VERSION_CURRENT, input, dirs, true);
+    splitter.split(Version.LATEST, input, dirs, true);
     IndexReader ir;
     ir = DirectoryReader.open(dirs[0]);
     assertTrue(ir.numDocs() - NUM_DOCS / 3 <= 1);

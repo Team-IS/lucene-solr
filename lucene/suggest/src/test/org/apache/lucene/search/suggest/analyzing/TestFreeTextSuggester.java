@@ -17,12 +17,11 @@ package org.apache.lucene.search.suggest.analyzing;
  * limitations under the License.
  */
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -53,7 +52,7 @@ import org.junit.Ignore;
 public class TestFreeTextSuggester extends LuceneTestCase {
 
   public void testBasic() throws Exception {
-    Iterable<Input> keys = shuffle(
+    Iterable<Input> keys = AnalyzingSuggesterTest.shuffle(
         new Input("foo bar baz blah", 50),
         new Input("boo foo bar foo bee", 20)
     );
@@ -82,16 +81,15 @@ public class TestFreeTextSuggester extends LuceneTestCase {
                    toString(sug.lookup("b", 10)));
 
       // Try again after save/load:
-      File tmpDir = TestUtil.getTempDir("FreeTextSuggesterTest");
-      tmpDir.mkdir();
+      Path tmpDir = createTempDir("FreeTextSuggesterTest");
 
-      File path = new File(tmpDir, "suggester");
+      Path path = tmpDir.resolve("suggester");
 
-      OutputStream os = new FileOutputStream(path);
+      OutputStream os = Files.newOutputStream(path);
       sug.store(os);
       os.close();
 
-      InputStream is = new FileInputStream(path);
+      InputStream is = Files.newInputStream(path);
       sug = new FreeTextSuggester(a, a, 2, (byte) 0x20);
       sug.load(is);
       is.close();
@@ -102,7 +100,7 @@ public class TestFreeTextSuggester extends LuceneTestCase {
   public void testIllegalByteDuringBuild() throws Exception {
     // Default separator is INFORMATION SEPARATOR TWO
     // (0x1e), so no input token is allowed to contain it
-    Iterable<Input> keys = shuffle(
+    Iterable<Input> keys = AnalyzingSuggesterTest.shuffle(
         new Input("foo\u001ebar baz", 50)
     );
     FreeTextSuggester sug = new FreeTextSuggester(new MockAnalyzer(random()));
@@ -117,7 +115,7 @@ public class TestFreeTextSuggester extends LuceneTestCase {
   public void testIllegalByteDuringQuery() throws Exception {
     // Default separator is INFORMATION SEPARATOR TWO
     // (0x1e), so no input token is allowed to contain it
-    Iterable<Input> keys = shuffle(
+    Iterable<Input> keys = AnalyzingSuggesterTest.shuffle(
         new Input("foo bar baz", 50)
     );
     FreeTextSuggester sug = new FreeTextSuggester(new MockAnalyzer(random()));
@@ -173,9 +171,18 @@ public class TestFreeTextSuggester extends LuceneTestCase {
           return false;
         }
 
+        @Override
+        public Set<BytesRef> contexts() {
+          return null;
+        }
+
+        @Override
+        public boolean hasContexts() {
+          return false;
+        }
       });
     if (VERBOSE) {
-      System.out.println(sug.sizeInBytes() + " bytes");
+      System.out.println(sug.ramBytesUsed() + " bytes");
 
       List<LookupResult> results = sug.lookup("general r", 10);
       System.out.println("results:");
@@ -187,7 +194,7 @@ public class TestFreeTextSuggester extends LuceneTestCase {
 
   // Make sure you can suggest based only on unigram model:
   public void testUnigrams() throws Exception {
-    Iterable<Input> keys = shuffle(
+    Iterable<Input> keys = AnalyzingSuggesterTest.shuffle(
         new Input("foo bar baz blah boo foo bar foo bee", 50)
     );
 
@@ -201,7 +208,7 @@ public class TestFreeTextSuggester extends LuceneTestCase {
 
   // Make sure the last token is not duplicated
   public void testNoDupsAcrossGrams() throws Exception {
-    Iterable<Input> keys = shuffle(
+    Iterable<Input> keys = AnalyzingSuggesterTest.shuffle(
         new Input("foo bar bar bar bar", 50)
     );
     Analyzer a = new MockAnalyzer(random());
@@ -213,7 +220,7 @@ public class TestFreeTextSuggester extends LuceneTestCase {
 
   // Lookup of just empty string produces unicode only matches:
   public void testEmptyString() throws Exception {
-    Iterable<Input> keys = shuffle(
+    Iterable<Input> keys = AnalyzingSuggesterTest.shuffle(
         new Input("foo bar bar bar bar", 50)
     );
     Analyzer a = new MockAnalyzer(random());
@@ -235,12 +242,12 @@ public class TestFreeTextSuggester extends LuceneTestCase {
         @Override
         public TokenStreamComponents createComponents(String field) {
           Tokenizer tokenizer = new MockTokenizer();
-          CharArraySet stopSet = StopFilter.makeStopSet(TEST_VERSION_CURRENT, "of");
-          return new TokenStreamComponents(tokenizer, new StopFilter(TEST_VERSION_CURRENT, tokenizer, stopSet));
+          CharArraySet stopSet = StopFilter.makeStopSet("of");
+          return new TokenStreamComponents(tokenizer, new StopFilter(tokenizer, stopSet));
         }
       };
 
-    Iterable<Input> keys = shuffle(
+    Iterable<Input> keys = AnalyzingSuggesterTest.shuffle(
         new Input("wizard of oz", 50)
     );
     FreeTextSuggester sug = new FreeTextSuggester(a, a, 3, (byte) 0x20);
@@ -263,12 +270,12 @@ public class TestFreeTextSuggester extends LuceneTestCase {
         @Override
         public TokenStreamComponents createComponents(String field) {
           Tokenizer tokenizer = new MockTokenizer();
-          CharArraySet stopSet = StopFilter.makeStopSet(TEST_VERSION_CURRENT, "of");
-          return new TokenStreamComponents(tokenizer, new StopFilter(TEST_VERSION_CURRENT, tokenizer, stopSet));
+          CharArraySet stopSet = StopFilter.makeStopSet("of");
+          return new TokenStreamComponents(tokenizer, new StopFilter(tokenizer, stopSet));
         }
       };
 
-    Iterable<Input> keys = shuffle(
+    Iterable<Input> keys = AnalyzingSuggesterTest.shuffle(
         new Input("wizard of of oz", 50)
     );
     FreeTextSuggester sug = new FreeTextSuggester(a, a, 3, (byte) 0x20);
@@ -362,6 +369,16 @@ public class TestFreeTextSuggester extends LuceneTestCase {
 
         @Override
         public boolean hasPayloads() {
+          return false;
+        }
+
+        @Override
+        public Set<BytesRef> contexts() {
+          return null;
+        }
+
+        @Override
+        public boolean hasContexts() {
           return false;
         }
       });
@@ -583,16 +600,6 @@ public class TestFreeTextSuggester extends LuceneTestCase {
       b.append(String.format(Locale.ROOT, "%.2f", ((double) result.value)/Long.MAX_VALUE));
     }
     return b.toString().trim();
-  }
-
-  @SafeVarargs
-  private final <T> Iterable<T> shuffle(T...values) {
-    final List<T> asList = new ArrayList<>(values.length);
-    for (T value : values) {
-      asList.add(value);
-    }
-    Collections.shuffle(asList, random());
-    return asList;
   }
 }
 

@@ -27,6 +27,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
+
 
 /**
  * A memory-resident {@link Directory} implementation.  Locking
@@ -45,7 +48,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * implementation working directly on the file system cache of the
  * operating system, so copying data to Java heap space is not useful.
  */
-public class RAMDirectory extends BaseDirectory {
+public class RAMDirectory extends BaseDirectory implements Accountable {
   protected final Map<String,RAMFile> fileMap = new ConcurrentHashMap<>();
   protected final AtomicLong sizeInBytes = new AtomicLong();
   
@@ -110,6 +113,8 @@ public class RAMDirectory extends BaseDirectory {
   @Override
   public final String[] listAll() {
     ensureOpen();
+    // NOTE: this returns a "weakly consistent view". Unless we change Dir API, keep this,
+    // and do not synchronize or anything stronger. its great for testing!
     // NOTE: fileMap.keySet().toArray(new String[0]) is broken in non Sun JDKs,
     // and the code below is resilient to map changes during the array population.
     Set<String> fileNames = fileMap.keySet();
@@ -118,9 +123,7 @@ public class RAMDirectory extends BaseDirectory {
     return names.toArray(new String[names.size()]);
   }
 
-  /** Returns true iff the named file exists in this directory. */
-  @Override
-  public final boolean fileExists(String name) {
+  public final boolean fileNameExists(String name) {
     ensureOpen();
     return fileMap.containsKey(name);
   }
@@ -142,11 +145,22 @@ public class RAMDirectory extends BaseDirectory {
    * Return total size in bytes of all files in this directory. This is
    * currently quantized to RAMOutputStream.BUFFER_SIZE.
    */
-  public final long sizeInBytes() {
+  @Override
+  public final long ramBytesUsed() {
     ensureOpen();
     return sizeInBytes.get();
   }
   
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Accountables.namedAccountables("file", fileMap);
+  }
+  
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(id=" + getLockID() + ")";
+  }
+
   /** Removes an existing file in the directory.
    * @throws IOException if the file does not exist
    */
@@ -173,7 +187,7 @@ public class RAMDirectory extends BaseDirectory {
       existing.directory = null;
     }
     fileMap.put(name, file);
-    return new RAMOutputStream(file);
+    return new RAMOutputStream(file, true);
   }
 
   /**
@@ -187,6 +201,17 @@ public class RAMDirectory extends BaseDirectory {
 
   @Override
   public void sync(Collection<String> names) throws IOException {
+  }
+
+  @Override
+  public void renameFile(String source, String dest) throws IOException {
+    ensureOpen();
+    RAMFile file = fileMap.get(source);
+    if (file == null) {
+      throw new FileNotFoundException(source);
+    }
+    fileMap.put(dest, file);
+    fileMap.remove(source);
   }
 
   /** Returns a stream reading an existing file. */
@@ -206,5 +231,4 @@ public class RAMDirectory extends BaseDirectory {
     isOpen = false;
     fileMap.clear();
   }
-  
 }

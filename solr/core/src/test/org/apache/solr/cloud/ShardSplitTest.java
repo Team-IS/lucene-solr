@@ -38,7 +38,6 @@ import org.apache.solr.common.cloud.ZkNodeProps;
 import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
-import org.apache.solr.update.DirectUpdateHandler2;
 import org.junit.After;
 import org.junit.Before;
 
@@ -52,10 +51,10 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
-import static org.apache.lucene.util.LuceneTestCase.Slow;
-import static org.apache.solr.cloud.OverseerCollectionProcessor.MAX_SHARDS_PER_NODE;
+import org.apache.lucene.util.LuceneTestCase.Slow;
 import static org.apache.solr.cloud.OverseerCollectionProcessor.NUM_SLICES;
-import static org.apache.solr.cloud.OverseerCollectionProcessor.REPLICATION_FACTOR;
+import static org.apache.solr.common.cloud.ZkStateReader.REPLICATION_FACTOR;
+import static org.apache.solr.common.cloud.ZkStateReader.MAX_SHARDS_PER_NODE;
 
 @Slow
 public class ShardSplitTest extends BasicDistributedZkTest {
@@ -97,6 +96,10 @@ public class ShardSplitTest extends BasicDistributedZkTest {
   public void doTest() throws Exception {
     waitForThingsToLevelOut(15);
 
+    if (usually()) {
+      log.info("Using legacyCloud=false for cluster");
+      CollectionsAPIDistributedZkTest.setClusterProp(cloudClient, "legacyCloud", "false");
+    }
     incompleteOrOverlappingCustomRangeTest();
     splitByUniqueKeyTest();
     splitByRouteFieldTest();
@@ -201,7 +204,9 @@ public class ShardSplitTest extends BasicDistributedZkTest {
               }
             }
           } catch (Exception e) {
-            log.error("Exception while adding docs", e);
+            log.error("Exception while adding doc id = " + id, e);
+            // do not select this id for deletion ever
+            deleted.add(String.valueOf(id));
           }
         }
       }
@@ -233,7 +238,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
       }
     }
 
-    waitForRecoveriesToFinish(false);
+    waitForRecoveriesToFinish(true);
     checkDocCountsAndShardStates(docCounts, numReplicas);
   }
 
@@ -464,8 +469,8 @@ public class ShardSplitTest extends BasicDistributedZkTest {
 
     logDebugHelp(docCounts, response, shard10Count, response2, shard11Count);
 
-    assertEquals("Wrong doc count on shard1_0", docCounts[0], shard10Count);
-    assertEquals("Wrong doc count on shard1_1", docCounts[1], shard11Count);
+    assertEquals("Wrong doc count on shard1_0. See SOLR-5309", docCounts[0], shard10Count);
+    assertEquals("Wrong doc count on shard1_1. See SOLR-5309", docCounts[1], shard11Count);
   }
 
   protected void checkSubShardConsistency(String shard) throws SolrServerException {
@@ -522,7 +527,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     baseUrl = baseUrl.substring(0, baseUrl.length() - "collection1".length());
 
     HttpSolrServer baseServer = new HttpSolrServer(baseUrl);
-    baseServer.setConnectionTimeout(15000);
+    baseServer.setConnectionTimeout(30000);
     baseServer.setSoTimeout(60000 * 5);
     baseServer.request(request);
     baseServer.shutdown();
@@ -609,7 +614,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
   }
 
   @Override
-  protected CloudSolrServer createCloudClient(String defaultCollection) throws MalformedURLException {
+  protected CloudSolrServer createCloudClient(String defaultCollection) {
     CloudSolrServer client = super.createCloudClient(defaultCollection);
     client.getLbServer().getHttpClient().getParams().setParameter(CoreConnectionPNames.SO_TIMEOUT, 5 * 60 * 1000);
     return client;

@@ -50,6 +50,8 @@ import org.apache.lucene.util.Version;
  * the indexed text.
  * Please note that it increases the number of elements searched and applies the
  * ponderation after. It might be costly for long suggestions.
+ *
+ * @lucene.experimental
  */
 public class BlendedInfixSuggester extends AnalyzingInfixSuggester {
 
@@ -92,6 +94,14 @@ public class BlendedInfixSuggester extends AnalyzingInfixSuggester {
    * Create a new instance, loading from a previously built
    * directory, if it exists.
    */
+  public BlendedInfixSuggester(Directory dir, Analyzer analyzer) throws IOException {
+    this(analyzer.getVersion(), dir, analyzer);
+  }
+
+  /**
+   * @deprecated Use {@link #BlendedInfixSuggester(Directory, Analyzer)}
+   */
+  @Deprecated
   public BlendedInfixSuggester(Version matchVersion, Directory dir, Analyzer analyzer) throws IOException {
     super(matchVersion, dir, analyzer);
     this.blenderType = BlenderType.POSITION_LINEAR;
@@ -104,25 +114,36 @@ public class BlendedInfixSuggester extends AnalyzingInfixSuggester {
    *
    * @param blenderType Type of blending strategy, see BlenderType for more precisions
    * @param numFactor   Factor to multiply the number of searched elements before ponderate
+   * @param commitOnBuild Call commit after the index has finished building. This would persist the
+   *                      suggester index to disk and future instances of this suggester can use this pre-built dictionary.
    * @throws IOException If there are problems opening the underlying Lucene index.
    */
+  public BlendedInfixSuggester(Directory dir, Analyzer indexAnalyzer, Analyzer queryAnalyzer,
+                               int minPrefixChars, BlenderType blenderType, int numFactor, boolean commitOnBuild) throws IOException {
+    this(indexAnalyzer.getVersion(), dir, indexAnalyzer, queryAnalyzer, minPrefixChars, blenderType, numFactor, commitOnBuild);
+  }
+
+  /**
+   * @deprecated Use {@link #BlendedInfixSuggester(Directory, Analyzer, Analyzer, int, BlendedInfixSuggester.BlenderType, int, boolean)}
+   */
+  @Deprecated
   public BlendedInfixSuggester(Version matchVersion, Directory dir, Analyzer indexAnalyzer, Analyzer queryAnalyzer,
-                               int minPrefixChars, BlenderType blenderType, int numFactor) throws IOException {
-    super(matchVersion, dir, indexAnalyzer, queryAnalyzer, minPrefixChars);
+                               int minPrefixChars, BlenderType blenderType, int numFactor, boolean commitOnBuild) throws IOException {
+    super(matchVersion, dir, indexAnalyzer, queryAnalyzer, minPrefixChars, commitOnBuild);
     this.blenderType = blenderType;
     this.numFactor = numFactor;
   }
 
   @Override
-  public List<Lookup.LookupResult> lookup(CharSequence key, boolean onlyMorePopular, int num) throws IOException {
+  public List<Lookup.LookupResult> lookup(CharSequence key, Set<BytesRef> contexts, boolean onlyMorePopular, int num) throws IOException {
     // here we multiply the number of searched element by the defined factor
-    return super.lookup(key, onlyMorePopular, num * numFactor);
+    return super.lookup(key, contexts, onlyMorePopular, num * numFactor);
   }
 
   @Override
-  public List<Lookup.LookupResult> lookup(CharSequence key, int num, boolean allTermsRequired, boolean doHighlight) throws IOException {
+  public List<Lookup.LookupResult> lookup(CharSequence key, Set<BytesRef> contexts, int num, boolean allTermsRequired, boolean doHighlight) throws IOException {
     // here we multiply the number of searched element by the defined factor
-    return super.lookup(key, num * numFactor, allTermsRequired, doHighlight);
+    return super.lookup(key, contexts, num * numFactor, allTermsRequired, doHighlight);
   }
 
   @Override
@@ -153,18 +174,15 @@ public class BlendedInfixSuggester extends AnalyzingInfixSuggester {
     // we reduce the num to the one initially requested
     int actualNum = num / numFactor;
 
-    BytesRef scratch = new BytesRef();
     for (int i = 0; i < hits.scoreDocs.length; i++) {
       FieldDoc fd = (FieldDoc) hits.scoreDocs[i];
 
-      textDV.get(fd.doc, scratch);
-      String text = scratch.utf8ToString();
+      final String text = textDV.get(fd.doc).utf8ToString();
       long weight = (Long) fd.fields[0];
 
       BytesRef payload;
       if (payloadsDV != null) {
-        payload = new BytesRef();
-        payloadsDV.get(fd.doc, payload);
+        payload = BytesRef.deepCopyOf(payloadsDV.get(fd.doc));
       } else {
         payload = null;
       }

@@ -22,14 +22,13 @@ import java.io.FileInputStream;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.IOException;
-
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -53,6 +52,9 @@ public class LicenseCheckTask extends Task {
   public final static String CHECKSUM_TYPE = "sha1";
   private static final int CHECKSUM_BUFFER_SIZE = 8 * 1024;
   private static final int CHECKSUM_BYTE_MASK = 0xFF;
+  private static final String FAILURE_MESSAGE = "License check failed. Check the logs.\n"
+      + "If you recently modified ivy-versions.properties or any module's ivy.xml,\n"
+      + "make sure you run \"ant clean-jars jar-checksums\" before running precommit.";
 
   private boolean skipSnapshotsChecksum;
   private boolean skipChecksum;
@@ -134,7 +136,7 @@ public class LicenseCheckTask extends Task {
     processJars();
 
     if (failures) {
-      throw new BuildException("License check failed. Check the logs.");
+      throw new BuildException(FAILURE_MESSAGE);
     }
   }
 
@@ -302,7 +304,7 @@ outer:
     BufferedReader reader = null;
     try {
       reader = new BufferedReader(new InputStreamReader
-                                  (new FileInputStream(f), "UTF-8"));
+                                  (new FileInputStream(f), StandardCharsets.UTF_8));
       try {
         String checksum = reader.readLine();
         if (null == checksum || 0 == checksum.length()) {

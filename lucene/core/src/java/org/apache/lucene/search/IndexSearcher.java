@@ -121,7 +121,7 @@ public class IndexSearcher {
 
   /** Runs searches for each segment separately, using the
    *  provided ExecutorService.  IndexSearcher will not
-   *  shutdown/awaitTermination this ExecutorService on
+   *  close/awaitTermination this ExecutorService on
    *  close; you must do so, eventually, on your own.  NOTE:
    *  if you are using {@link NIOFSDirectory}, do not use
    *  the shutdownNow method of ExecutorService as this uses
@@ -139,7 +139,7 @@ public class IndexSearcher {
    * <p>
    * Given a non-<code>null</code> {@link ExecutorService} this method runs
    * searches for each segment separately, using the provided ExecutorService.
-   * IndexSearcher will not shutdown/awaitTermination this ExecutorService on
+   * IndexSearcher will not close/awaitTermination this ExecutorService on
    * close; you must do so, eventually, on your own. NOTE: if you are using
    * {@link NIOFSDirectory}, do not use the shutdownNow method of
    * ExecutorService as this uses Thread.interrupt under-the-hood which can
@@ -287,7 +287,7 @@ public class IndexSearcher {
 
   /** Lower-level search API.
    *
-   * <p>{@link Collector#collect(int)} is called for every matching
+   * <p>{@link LeafCollector#collect(int)} is called for every matching
    * document.
    *
    * @param query to match documents
@@ -303,7 +303,7 @@ public class IndexSearcher {
 
   /** Lower-level search API.
    *
-   * <p>{@link Collector#collect(int)} is called for every matching document.
+   * <p>{@link LeafCollector#collect(int)} is called for every matching document.
    *
    * @throws BooleanQuery.TooManyClauses If a query would exceed 
    *         {@link BooleanQuery#getMaxClauseCount()} clauses.
@@ -600,7 +600,7 @@ public class IndexSearcher {
    * Lower-level search API.
    * 
    * <p>
-   * {@link Collector#collect(int)} is called for every document. <br>
+   * {@link LeafCollector#collect(int)} is called for every document. <br>
    * 
    * <p>
    * NOTE: this method executes the searches on all given leaves exclusively.
@@ -622,17 +622,18 @@ public class IndexSearcher {
     // threaded...?  the Collector could be sync'd?
     // always use single thread:
     for (AtomicReaderContext ctx : leaves) { // search each subreader
+      final LeafCollector leafCollector;
       try {
-        collector.setNextReader(ctx);
+        leafCollector = collector.getLeafCollector(ctx);
       } catch (CollectionTerminatedException e) {
         // there is no doc of interest in this reader context
         // continue with the following leaf
         continue;
       }
-      BulkScorer scorer = weight.bulkScorer(ctx, !collector.acceptsDocsOutOfOrder(), ctx.reader().getLiveDocs());
+      BulkScorer scorer = weight.bulkScorer(ctx, !leafCollector.acceptsDocsOutOfOrder(), ctx.reader().getLiveDocs());
       if (scorer != null) {
         try {
-          scorer.score(collector);
+          scorer.score(leafCollector);
         } catch (CollectionTerminatedException e) {
           // collection was terminated prematurely
           // continue with the following leaf
@@ -801,12 +802,12 @@ public class IndexSearcher {
       try {
         final AtomicReaderContext ctx = slice.leaves[0];
         final int base = ctx.docBase;
-        hq.setNextReader(ctx);
-        hq.setScorer(fakeScorer);
+        final LeafCollector collector = hq.getLeafCollector(ctx);
+        collector.setScorer(fakeScorer);
         for(ScoreDoc scoreDoc : docs.scoreDocs) {
           fakeScorer.doc = scoreDoc.doc - base;
           fakeScorer.score = scoreDoc.score;
-          hq.collect(scoreDoc.doc-base);
+          collector.collect(scoreDoc.doc-base);
         }
 
         // Carry over maxScore from sub:

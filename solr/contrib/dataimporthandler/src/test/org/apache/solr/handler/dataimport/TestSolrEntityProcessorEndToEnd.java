@@ -19,7 +19,6 @@ package org.apache.solr.handler.dataimport;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -27,7 +26,8 @@ import java.util.Map;
 import java.util.Map.Entry;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.http.client.HttpClient;
+import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.TestUtil;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
 import org.apache.solr.client.solrj.impl.HttpSolrServer;
@@ -293,7 +293,6 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
   }
   
   private static class SolrInstance {
-
     File homeDir;
     File confDir;
     
@@ -306,7 +305,7 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
     }
     
     public String getDataDir() {
-      return dataDir.toString();
+      return initCoreDataDir.toString();
     }
     
     public String getSolrConfigFile() {
@@ -318,16 +317,12 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
     }
 
     public void setUp() throws Exception {
-      
-      File home = new File(TEMP_DIR, getClass().getName() + "-"
-          + System.currentTimeMillis());
-      
-      homeDir = new File(home + "inst");
-      dataDir = new File(homeDir + "/collection1", "data");
+      homeDir = createTempDir().toFile();
+      initCoreDataDir = new File(homeDir + "/collection1", "data");
       confDir = new File(homeDir + "/collection1", "conf");
       
       homeDir.mkdirs();
-      dataDir.mkdirs();
+      initCoreDataDir.mkdirs();
       confDir.mkdirs();
 
       FileUtils.copyFile(getFile(getSolrXmlFile()), new File(homeDir, "solr.xml"));
@@ -339,16 +334,15 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
       f = new File(confDir, "data-config.xml");
       FileUtils.copyFile(getFile(SOURCE_CONF_DIR + "dataconfig-contentstream.xml"), f);
     }
-    
+
     public void tearDown() throws Exception {
-      recurseDelete(homeDir);
+      IOUtils.rm(homeDir.toPath());
     }
-    
   }
   
   private JettySolrRunner createJetty(SolrInstance instance) throws Exception {
-    System.setProperty("solr.data.dir", instance.getDataDir());
     JettySolrRunner jetty = new JettySolrRunner(instance.getHomeDir(), "/solr", 0, null, null, true, null, sslConfig);
+    jetty.setDataDir(instance.getDataDir());
     jetty.start();
     return jetty;
   }

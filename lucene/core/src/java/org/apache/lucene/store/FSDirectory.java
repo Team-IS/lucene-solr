@@ -17,21 +17,24 @@ package org.apache.lucene.store;
  * limitations under the License.
  */
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FilenameFilter;
-import java.io.IOException;
-import java.io.RandomAccessFile;
+import org.apache.lucene.util.Constants;
+import org.apache.lucene.util.IOUtils;
 
+import java.io.FileOutputStream;
+import java.io.FilterOutputStream;
+import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Collection;
-import static java.util.Collections.synchronizedSet;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Future;
 
-import org.apache.lucene.util.ThreadInterruptedException;
-import org.apache.lucene.util.Constants;
-import org.apache.lucene.util.IOUtils;
+import static java.util.Collections.synchronizedSet;
 
 /**
  * Base class for Directory implementations that store index
@@ -43,7 +46,7 @@ import org.apache.lucene.util.IOUtils;
  * <ul>
  *
  *  <li> {@link SimpleFSDirectory} is a straightforward
- *       implementation using java.io.RandomAccessFile.
+ *       implementation using Files.newByteChannel.
  *       However, it has poor concurrent performance
  *       (multiple threads will bottleneck) as it
  *       synchronizes when multiple threads read from the
@@ -58,7 +61,7 @@ import org.apache.lucene.util.IOUtils;
  *       on all other platforms this is the preferred
  *       choice. Applications using {@link Thread#interrupt()} or
  *       {@link Future#cancel(boolean)} should use
- *       {@link SimpleFSDirectory} instead. See {@link NIOFSDirectory} java doc
+ *       {@code RAFDirectory} instead. See {@link NIOFSDirectory} java doc
  *       for details.
  *        
  *        
@@ -90,7 +93,7 @@ import org.apache.lucene.util.IOUtils;
  *       
  *       Applications using {@link Thread#interrupt()} or
  *       {@link Future#cancel(boolean)} should use
- *       {@link SimpleFSDirectory} instead. See {@link MMapDirectory}
+ *       {@code RAFDirectory} instead. See {@link MMapDirectory}
  *       java doc for details.
  * </ul>
  *
@@ -112,13 +115,8 @@ import org.apache.lucene.util.IOUtils;
  */
 public abstract class FSDirectory extends BaseDirectory {
 
-  protected final File directory; // The underlying filesystem directory
+  protected final Path directory; // The underlying filesystem directory
   protected final Set<String> staleFiles = synchronizedSet(new HashSet<String>()); // Files written, but not yet sync'ed
-
-  // returns the canonical version of the directory, creating it if it doesn't exist.
-  private static File getCanonicalPath(File file) throws IOException {
-    return new File(file.getCanonicalPath());
-  }
 
   /** Create a new FSDirectory for the named location (ctor for subclasses).
    * @param path the path of the directory
@@ -126,18 +124,16 @@ public abstract class FSDirectory extends BaseDirectory {
    * ({@link NativeFSLockFactory});
    * @throws IOException if there is a low-level I/O error
    */
-  protected FSDirectory(File path, LockFactory lockFactory) throws IOException {
+  protected FSDirectory(Path path, LockFactory lockFactory) throws IOException {
     // new ctors use always NativeFSLockFactory as default:
     if (lockFactory == null) {
       lockFactory = new NativeFSLockFactory();
     }
-    directory = getCanonicalPath(path);
-
-    if (directory.exists() && !directory.isDirectory())
-      throw new NoSuchDirectoryException("file '" + directory + "' exists but is not a directory");
+    
+    Files.createDirectories(path);  // create directory, if it doesnt exist
+    directory = path.toRealPath();
 
     setLockFactory(lockFactory);
-
   }
 
   /** Creates an FSDirectory instance, trying to pick the
@@ -160,15 +156,14 @@ public abstract class FSDirectory extends BaseDirectory {
    * {@link MMapDirectory} on 64 bit JVMs.
    *
    * <p>See <a href="#subclasses">above</a> */
-  public static FSDirectory open(File path) throws IOException {
+  public static FSDirectory open(Path path) throws IOException {
     return open(path, null);
   }
 
-  /** Just like {@link #open(File)}, but allows you to
+  /** Just like {@link #open(Path)}, but allows you to
    *  also specify a custom {@link LockFactory}. */
-  public static FSDirectory open(File path, LockFactory lockFactory) throws IOException {
-    if ((Constants.WINDOWS || Constants.SUN_OS || Constants.LINUX)
-          && Constants.JRE_IS_64BIT && MMapDirectory.UNMAP_SUPPORTED) {
+  public static FSDirectory open(Path path, LockFactory lockFactory) throws IOException {
+    if (Constants.JRE_IS_64BIT && MMapDirectory.UNMAP_SUPPORTED) {
       return new MMapDirectory(path, lockFactory);
     } else if (Constants.WINDOWS) {
       return new SimpleFSDirectory(path, lockFactory);
@@ -185,12 +180,12 @@ public abstract class FSDirectory extends BaseDirectory {
     // in index dir. If no index dir is given, set ourselves
     if (lockFactory instanceof FSLockFactory) {
       final FSLockFactory lf = (FSLockFactory) lockFactory;
-      final File dir = lf.getLockDir();
+      final Path dir = lf.getLockDir();
       // if the lock factory has no lockDir set, use the this directory as lockDir
       if (dir == null) {
         lf.setLockDir(directory);
         lf.setLockPrefix(null);
-      } else if (dir.getCanonicalPath().equals(directory.getCanonicalPath())) {
+      } else if (dir.toRealPath().equals(directory)) {
         lf.setLockPrefix(null);
       }
     }
@@ -198,70 +193,47 @@ public abstract class FSDirectory extends BaseDirectory {
   }
   
   /** Lists all files (not subdirectories) in the
-   *  directory.  This method never returns null (throws
-   *  {@link IOException} instead).
+   *  directory.
    *
-   *  @throws NoSuchDirectoryException if the directory
-   *   does not exist, or does exist but is not a
-   *   directory.
-   *  @throws IOException if list() returns null */
-  public static String[] listAll(File dir) throws IOException {
-    if (!dir.exists())
-      throw new NoSuchDirectoryException("directory '" + dir + "' does not exist");
-    else if (!dir.isDirectory())
-      throw new NoSuchDirectoryException("file '" + dir + "' exists but is not a directory");
-
-    // Exclude subdirs
-    String[] result = dir.list(new FilenameFilter() {
-        @Override
-        public boolean accept(File dir, String file) {
-          return !new File(dir, file).isDirectory();
-        }
-      });
-
-    if (result == null)
-      throw new IOException("directory '" + dir + "' exists and is a directory, but cannot be listed: list() returned null");
-
-    return result;
+   *  @throws IOException if there was an I/O error during listing */
+  public static String[] listAll(Path dir) throws IOException {
+    List<String> entries = new ArrayList<>();
+    
+    try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, new DirectoryStream.Filter<Path>() {
+      @Override
+      public boolean accept(Path entry) throws IOException {
+        return !Files.isDirectory(entry); // filter out entries that are definitely directories.
+      }
+    })) {
+      for (Path path : stream) {
+        entries.add(path.getFileName().toString());
+      }
+    }
+    
+    return entries.toArray(new String[entries.size()]);
   }
 
   /** Lists all files (not subdirectories) in the
    * directory.
-   * @see #listAll(File) */
+   * @see #listAll(Path) */
   @Override
   public String[] listAll() throws IOException {
     ensureOpen();
     return listAll(directory);
   }
 
-  /** Returns true iff a file with the given name exists. */
-  @Override
-  public boolean fileExists(String name) {
-    ensureOpen();
-    File file = new File(directory, name);
-    return file.exists();
-  }
-
   /** Returns the length in bytes of a file in the directory. */
   @Override
   public long fileLength(String name) throws IOException {
     ensureOpen();
-    File file = new File(directory, name);
-    final long len = file.length();
-    if (len == 0 && !file.exists()) {
-      throw new FileNotFoundException(name);
-    } else {
-      return len;
-    }
+    return Files.size(directory.resolve(name));
   }
 
   /** Removes an existing file in the directory. */
   @Override
   public void deleteFile(String name) throws IOException {
     ensureOpen();
-    File file = new File(directory, name);
-    if (!file.delete())
-      throw new IOException("Cannot delete " + file);
+    Files.delete(directory.resolve(name));
     staleFiles.remove(name);
   }
 
@@ -271,17 +243,11 @@ public abstract class FSDirectory extends BaseDirectory {
     ensureOpen();
 
     ensureCanWrite(name);
-    return new FSIndexOutput(this, name);
+    return new FSIndexOutput(name);
   }
 
   protected void ensureCanWrite(String name) throws IOException {
-    if (!directory.exists())
-      if (!directory.mkdirs())
-        throw new IOException("Cannot create directory: " + directory);
-
-    File file = new File(directory, name);
-    if (file.exists() && !file.delete())          // delete existing, if any
-      throw new IOException("Cannot overwrite: " + file);
+    Files.deleteIfExists(directory.resolve(name)); // delete existing, if any
   }
 
   /**
@@ -298,21 +264,26 @@ public abstract class FSDirectory extends BaseDirectory {
     Set<String> toSync = new HashSet<>(names);
     toSync.retainAll(staleFiles);
 
-    for (String name : toSync)
+    for (String name : toSync) {
       fsync(name);
-
+    }
+    
     staleFiles.removeAll(toSync);
+  }
+  
+  @Override
+  public void renameFile(String source, String dest) throws IOException {
+    ensureOpen();
+    Files.move(directory.resolve(source), directory.resolve(dest), StandardCopyOption.ATOMIC_MOVE);
+    // TODO: should we move directory fsync to a separate 'syncMetadata' method?
+    // for example, to improve listCommits(), IndexFileDeleter could also call that after deleting segments_Ns
+    IOUtils.fsync(directory, true);
   }
 
   @Override
   public String getLockID() {
     ensureOpen();
-    String dirName;                               // name to be hashed
-    try {
-      dirName = directory.getCanonicalPath();
-    } catch (IOException e) {
-      throw new RuntimeException(e.toString(), e);
-    }
+    String dirName = directory.toString();  // name to be hashed
 
     int digest = 0;
     for(int charIDX=0;charIDX<dirName.length();charIDX++) {
@@ -329,7 +300,7 @@ public abstract class FSDirectory extends BaseDirectory {
   }
 
   /** @return the underlying filesystem directory */
-  public File getDirectory() {
+  public Path getDirectory() {
     ensureOpen();
     return directory;
   }
@@ -340,99 +311,42 @@ public abstract class FSDirectory extends BaseDirectory {
     return this.getClass().getSimpleName() + "@" + directory + " lockFactory=" + getLockFactory();
   }
 
-  /**
-   * Writes output with {@link RandomAccessFile#write(byte[], int, int)}
-   */
-  protected static class FSIndexOutput extends BufferedIndexOutput {
+  final class FSIndexOutput extends OutputStreamIndexOutput {
     /**
-     * The maximum chunk size is 8192 bytes, because {@link RandomAccessFile} mallocs
+     * The maximum chunk size is 8192 bytes, because {@link FileOutputStream} mallocs
      * a native buffer outside of stack if the write buffer size is larger.
      */
-    private static final int CHUNK_SIZE = 8192;
+    static final int CHUNK_SIZE = 8192;
     
-    private final FSDirectory parent;
     private final String name;
-    private final RandomAccessFile file;
-    private volatile boolean isOpen; // remember if the file is open, so that we don't try to close it more than once
-    
-    public FSIndexOutput(FSDirectory parent, String name) throws IOException {
-      super(CHUNK_SIZE);
-      this.parent = parent;
-      this.name = name;
-      file = new RandomAccessFile(new File(parent.directory, name), "rw");
-      isOpen = true;
-    }
 
-    @Override
-    protected void flushBuffer(byte[] b, int offset, int size) throws IOException {
-      assert isOpen;
-      while (size > 0) {
-        final int toWrite = Math.min(CHUNK_SIZE, size);
-        file.write(b, offset, toWrite);
-        offset += toWrite;
-        size -= toWrite;
-      }
-      assert size == 0;
+    public FSIndexOutput(String name) throws IOException {
+      super(new FilterOutputStream(Files.newOutputStream(directory.resolve(name))) {
+        // This implementation ensures, that we never write more than CHUNK_SIZE bytes:
+        @Override
+        public void write(byte[] b, int offset, int length) throws IOException {
+          while (length > 0) {
+            final int chunk = Math.min(length, CHUNK_SIZE);
+            out.write(b, offset, chunk);
+            length -= chunk;
+            offset += chunk;
+          }
+        }
+      }, CHUNK_SIZE);
+      this.name = name;
     }
     
     @Override
     public void close() throws IOException {
-      parent.onIndexOutputClosed(name);
-      // only close the file if it has not been closed yet
-      if (isOpen) {
-        IOException priorE = null;
-        try {
-          super.close();
-        } catch (IOException ioe) {
-          priorE = ioe;
-        } finally {
-          isOpen = false;
-          IOUtils.closeWhileHandlingException(priorE, file);
-        }
+      try {
+        onIndexOutputClosed(name);
+      } finally {
+        super.close();
       }
-    }
-
-    @Override
-    public long length() throws IOException {
-      return file.length();
-    }
-
-    @Override
-    public void setLength(long length) throws IOException {
-      file.setLength(length);
     }
   }
 
   protected void fsync(String name) throws IOException {
-    File fullFile = new File(directory, name);
-    boolean success = false;
-    int retryCount = 0;
-    IOException exc = null;
-    while (!success && retryCount < 5) {
-      retryCount++;
-      RandomAccessFile file = null;
-      try {
-        try {
-          file = new RandomAccessFile(fullFile, "rw");
-          file.getFD().sync();
-          success = true;
-        } finally {
-          if (file != null)
-            file.close();
-        }
-      } catch (IOException ioe) {
-        if (exc == null)
-          exc = ioe;
-        try {
-          // Pause 5 msec
-          Thread.sleep(5);
-        } catch (InterruptedException ie) {
-          throw new ThreadInterruptedException(ie);
-        }
-      }
-    }
-    if (!success)
-      // Throw original exception
-      throw exc;
+    IOUtils.fsync(directory.resolve(name), false);
   }
 }

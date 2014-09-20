@@ -30,15 +30,17 @@ package org.apache.lucene.search.suggest.jaspell;
  */
 
 import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Vector;
 import java.util.zip.GZIPInputStream;
 
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 
@@ -61,13 +63,16 @@ import org.apache.lucene.util.RamUsageEstimator;
  * Algorithms, January 1997). Algorithms in C, Third Edition, by Robert
  * Sedgewick (Addison-Wesley, 1998) provides yet another view of ternary search
  * trees.
+ *
+ * @deprecated Migrate to one of the newer suggesters which are much more RAM efficient.
  */
-public class JaspellTernarySearchTrie {
+@Deprecated
+public class JaspellTernarySearchTrie implements Accountable {
 
   /**
    * An inner class of Ternary Search Trie that represents a node in the trie.
    */
-  protected final class TSTNode {
+  protected final class TSTNode implements Accountable {
 
     /** Index values for accessing relatives array. */
     protected final static int PARENT = 0, LOKID = 1, EQKID = 2, HIKID = 3;
@@ -94,17 +99,23 @@ public class JaspellTernarySearchTrie {
       relatives[PARENT] = parent;
     }
 
-    /** Return an approximate memory usage for this node and its sub-nodes. */
-    public long sizeInBytes() {
+    @Override
+    public long ramBytesUsed() {
       long mem = RamUsageEstimator.shallowSizeOf(this) + RamUsageEstimator.shallowSizeOf(relatives);
-      for (TSTNode node : relatives) {
+      // We don't need to add parent since our parent added itself:
+      for (int i=1;i<4;i++) {
+        TSTNode node = relatives[i];
         if (node != null) {
-          mem += node.sizeInBytes();
+          mem += node.ramBytesUsed();
         }
       }
       return mem;
     }
-
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Collections.emptyList();
+    }
   }
 
   /**
@@ -192,16 +203,16 @@ public class JaspellTernarySearchTrie {
   }
 
   /**
-   * Constructs a Ternary Search Trie and loads data from a <code>File</code>
+   * Constructs a Ternary Search Trie and loads data from a <code>Path</code>
    * into the Trie. The file is a normal text document, where each line is of
    * the form word TAB float.
    * 
    *@param file
-   *          The <code>File</code> with the data to load into the Trie.
+   *          The <code>Path</code> with the data to load into the Trie.
    *@exception IOException
    *              A problem occured while reading the data.
    */
-  public JaspellTernarySearchTrie(File file) throws IOException {
+  public JaspellTernarySearchTrie(Path file) throws IOException {
     this(file, false);
   }
 
@@ -218,21 +229,18 @@ public class JaspellTernarySearchTrie {
    *@exception IOException
    *              A problem occured while reading the data.
    */
-  public JaspellTernarySearchTrie(File file, boolean compression)
+  public JaspellTernarySearchTrie(Path file, boolean compression)
           throws IOException {
     this();
     BufferedReader in;
     if (compression)
       in = new BufferedReader(IOUtils.getDecodingReader(new GZIPInputStream(
-              new FileInputStream(file)), IOUtils.CHARSET_UTF_8));
-    else in = new BufferedReader(IOUtils.getDecodingReader((new FileInputStream(
-            file)), IOUtils.CHARSET_UTF_8));
+              Files.newInputStream(file)), StandardCharsets.UTF_8));
+    else in = Files.newBufferedReader(file, StandardCharsets.UTF_8);
     String word;
     int pos;
     Float occur, one = new Float(1);
-    int numWords = 0;
     while ((word = in.readLine()) != null) {
-      numWords++;
       pos = word.indexOf("\t");
       occur = one;
       if (pos != -1) {
@@ -886,14 +894,18 @@ public class JaspellTernarySearchTrie {
             sortKeysNumReturnValues, sortKeysResult);
   }
 
-  /** Return an approximate memory usage for this trie. */
-  public long sizeInBytes() {
+  @Override
+  public long ramBytesUsed() {
     long mem = RamUsageEstimator.shallowSizeOf(this);
     final TSTNode root = getRoot();
     if (root != null) {
-      mem += root.sizeInBytes();
+      mem += root.ramBytesUsed();
     }
     return mem;
   }
-
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.emptyList();
+  }
 }

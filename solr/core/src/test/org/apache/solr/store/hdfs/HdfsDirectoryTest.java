@@ -17,7 +17,6 @@ package org.apache.solr.store.hdfs;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Random;
@@ -30,6 +29,7 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.store.NoLockFactory;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.cloud.hdfs.HdfsTestUtil;
@@ -58,10 +58,7 @@ public class HdfsDirectoryTest extends SolrTestCaseJ4 {
 
   @BeforeClass
   public static void beforeClass() throws Exception {
-    createTempDir();
-    dfsCluster = HdfsTestUtil.setupClass(TEMP_DIR.getAbsolutePath()
-        + File.separator + HdfsDirectoryTest.class.getName() + "_hdfsdir-"
-        + System.currentTimeMillis());
+    dfsCluster = HdfsTestUtil.setupClass(createTempDir().toFile().getAbsolutePath());
   }
   
   @AfterClass
@@ -77,7 +74,7 @@ public class HdfsDirectoryTest extends SolrTestCaseJ4 {
     Configuration conf = new Configuration();
     conf.set("dfs.permissions.enabled", "false");
     
-    directory = new HdfsDirectory(new Path(dfsCluster.getURI().toString() + dataDir.getAbsolutePath() + "/hdfs"), conf);
+    directory = new HdfsDirectory(new Path(dfsCluster.getURI().toString() + createTempDir().toFile().getAbsolutePath() + "/hdfs"), NoLockFactory.getNoLockFactory(), conf);
     
     random = random();
   }
@@ -96,7 +93,6 @@ public class HdfsDirectoryTest extends SolrTestCaseJ4 {
     
     IndexOutput output = directory.createOutput("testing.test", new IOContext());
     output.writeInt(12345);
-    output.flush();
     output.close();
 
     IndexInput input = directory.openInput("testing.test", new IOContext());
@@ -118,10 +114,30 @@ public class HdfsDirectoryTest extends SolrTestCaseJ4 {
     assertEquals(12345, input1.readInt());
     input1.close();
 
-    assertFalse(directory.fileExists("testing.test.other"));
-    assertTrue(directory.fileExists("testing.test"));
+    assertFalse(slowFileExists(directory, "testing.test.other"));
+    assertTrue(slowFileExists(directory, "testing.test"));
     directory.deleteFile("testing.test");
-    assertFalse(directory.fileExists("testing.test"));
+    assertFalse(slowFileExists(directory, "testing.test"));
+  }
+  
+  public void testRename() throws IOException {
+    String[] listAll = directory.listAll();
+    for (String file : listAll) {
+      directory.deleteFile(file);
+    }
+    
+    IndexOutput output = directory.createOutput("testing.test", new IOContext());
+    output.writeInt(12345);
+    output.close();
+    directory.renameFile("testing.test", "testing.test.renamed");
+    assertFalse(slowFileExists(directory, "testing.test"));
+    assertTrue(slowFileExists(directory, "testing.test.renamed"));
+    IndexInput input = directory.openInput("testing.test.renamed", new IOContext());
+    assertEquals(12345, input.readInt());
+    assertEquals(input.getFilePointer(), input.length());
+    input.close();
+    directory.deleteFile("testing.test.renamed");
+    assertFalse(slowFileExists(directory, "testing.test.renamed"));
   }
   
   @Test
@@ -200,9 +216,7 @@ public class HdfsDirectoryTest extends SolrTestCaseJ4 {
     int writes = random.nextInt(MAX_NUMBER_OF_WRITES);
     int fileLength = random.nextInt(MAX_FILE_SIZE - MIN_FILE_SIZE) + MIN_FILE_SIZE;
     IndexOutput fsOutput = fsDir.createOutput(name, new IOContext());
-    fsOutput.setLength(fileLength);
     IndexOutput hdfsOutput = hdfs.createOutput(name, new IOContext());
-    hdfsOutput.setLength(fileLength);
     for (int i = 0; i < writes; i++) {
       byte[] buf = new byte[random.nextInt(Math.min(MAX_BUFFER_SIZE - MIN_BUFFER_SIZE,fileLength)) + MIN_BUFFER_SIZE];
       random.nextBytes(buf);

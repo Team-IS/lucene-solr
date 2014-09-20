@@ -18,18 +18,14 @@ package org.apache.lucene.analysis.pt;
  */
 
 import java.io.IOException;
-import java.io.Reader;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.BaseTokenStreamTestCase;
 import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.Tokenizer;
-import org.apache.lucene.analysis.Analyzer.TokenStreamComponents;
 import org.apache.lucene.analysis.core.KeywordTokenizer;
-import org.apache.lucene.analysis.core.LowerCaseFilter;
 import org.apache.lucene.analysis.miscellaneous.SetKeywordMarkerFilter;
-import org.apache.lucene.analysis.standard.StandardTokenizer;
 import org.apache.lucene.analysis.util.CharArraySet;
 
 import static org.apache.lucene.analysis.VocabularyAssert.*;
@@ -41,9 +37,8 @@ public class TestPortugueseLightStemFilter extends BaseTokenStreamTestCase {
   private Analyzer analyzer = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      Tokenizer source = new StandardTokenizer(TEST_VERSION_CURRENT);
-      TokenStream result = new LowerCaseFilter(TEST_VERSION_CURRENT, source);
-      return new TokenStreamComponents(source, new PortugueseLightStemFilter(result));
+      Tokenizer source = new MockTokenizer(MockTokenizer.SIMPLE, true);
+      return new TokenStreamComponents(source, new PortugueseLightStemFilter(source));
     }
   };
   
@@ -93,11 +88,11 @@ public class TestPortugueseLightStemFilter extends BaseTokenStreamTestCase {
   
   /** Test against a vocabulary from the reference impl */
   public void testVocabulary() throws IOException {
-    assertVocabulary(analyzer, getDataFile("ptlighttestdata.zip"), "ptlight.txt");
+    assertVocabulary(analyzer, getDataPath("ptlighttestdata.zip"), "ptlight.txt");
   }
   
   public void testKeyword() throws IOException {
-    final CharArraySet exclusionSet = new CharArraySet(TEST_VERSION_CURRENT, asSet("quilométricas"), false);
+    final CharArraySet exclusionSet = new CharArraySet( asSet("quilométricas"), false);
     Analyzer a = new Analyzer() {
       @Override
       protected TokenStreamComponents createComponents(String fieldName) {

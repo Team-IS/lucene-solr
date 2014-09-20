@@ -71,18 +71,22 @@ public class TestSortingMergePolicy extends LuceneTestCase {
   }
 
   static MergePolicy newSortingMergePolicy(Sort sort) {
-    // create a MP with a low merge factor so that many merges happen
+    // usually create a MP with a low merge factor so that many merges happen
     MergePolicy mp;
-    if (random().nextBoolean()) {
+    int thingToDo = random().nextInt(3);
+    if (thingToDo == 0) {
       TieredMergePolicy tmp = newTieredMergePolicy(random());
       final int numSegs = TestUtil.nextInt(random(), 3, 5);
       tmp.setSegmentsPerTier(numSegs);
       tmp.setMaxMergeAtOnce(TestUtil.nextInt(random(), 2, numSegs));
       mp = tmp;
-    } else {
+    } else if (thingToDo == 1) {
       LogMergePolicy lmp = newLogMergePolicy(random());
       lmp.setMergeFactor(TestUtil.nextInt(random(), 3, 5));
       mp = lmp;
+    } else {
+      // just a regular random one from LTC (could be alcoholic etc)
+      mp = newMergePolicy();
     }
     // wrap it with a sorting mp
     return new SortingMergePolicy(mp, sort);
@@ -99,8 +103,8 @@ public class TestSortingMergePolicy extends LuceneTestCase {
     }
     terms = new ArrayList<>(randomTerms);
     final long seed = random().nextLong();
-    final IndexWriterConfig iwc1 = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(new Random(seed)));
-    final IndexWriterConfig iwc2 = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(new Random(seed)));
+    final IndexWriterConfig iwc1 = newIndexWriterConfig(new MockAnalyzer(new Random(seed)));
+    final IndexWriterConfig iwc2 = newIndexWriterConfig(new MockAnalyzer(new Random(seed)));
     iwc2.setMergePolicy(newSortingMergePolicy(sort));
     final RandomIndexWriter iw1 = new RandomIndexWriter(new Random(seed), dir1, iwc1);
     final RandomIndexWriter iw2 = new RandomIndexWriter(new Random(seed), dir2, iwc2);
@@ -131,13 +135,11 @@ public class TestSortingMergePolicy extends LuceneTestCase {
     iw1.w.addDocument(doc);
     iw2.w.addDocument(doc);
 
-    if (defaultCodecSupportsFieldUpdates()) {
-      // update NDV of docs belonging to one term (covers many documents)
-      final long value = random().nextLong();
-      final String term = RandomPicks.randomFrom(random(), terms);
-      iw1.w.updateNumericDocValue(new Term("s", term), "ndv", value);
-      iw2.w.updateNumericDocValue(new Term("s", term), "ndv", value);
-    }
+    // update NDV of docs belonging to one term (covers many documents)
+    final long value = random().nextLong();
+    final String term = RandomPicks.randomFrom(random(), terms);
+    iw1.w.updateNumericDocValue(new Term("s", term), "ndv", value);
+    iw2.w.updateNumericDocValue(new Term("s", term), "ndv", value);
     
     iw1.forceMerge(1);
     iw2.forceMerge(1);

@@ -25,31 +25,26 @@ import java.util.Random;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.codecs.Codec;
+import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.FieldsProducer;
-import org.apache.lucene.codecs.lucene40.Lucene40RWCodec;
-import org.apache.lucene.codecs.lucene41.Lucene41RWCodec;
-import org.apache.lucene.codecs.lucene42.Lucene42RWCodec;
-import org.apache.lucene.codecs.mocksep.MockSepPostingsFormat;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field.Store;
-import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StringField;
-import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.FieldInfo.DocValuesType;
 import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.Constants;
+import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.Version;
 import org.junit.BeforeClass;
 
 // TODO: test multiple codecs here?
@@ -254,7 +249,7 @@ public class TestCodecs extends LuceneTestCase {
     final Directory dir = newDirectory();
     this.write(fieldInfos, dir, fields);
     Codec codec = Codec.getDefault();
-    final SegmentInfo si = new SegmentInfo(dir, Constants.LUCENE_MAIN_VERSION, SEGMENT, 10000, false, codec, null);
+    final SegmentInfo si = new SegmentInfo(dir, Version.LATEST, SEGMENT, 10000, false, codec, null);
 
     final FieldsProducer reader = codec.postingsFormat().fieldsProducer(new SegmentReadState(dir, si, fieldInfos, newIOContext(random())));
 
@@ -311,7 +306,7 @@ public class TestCodecs extends LuceneTestCase {
 
     this.write(fieldInfos, dir, fields);
     Codec codec = Codec.getDefault();
-    final SegmentInfo si = new SegmentInfo(dir, Constants.LUCENE_MAIN_VERSION, SEGMENT, 10000, false, codec, null);
+    final SegmentInfo si = new SegmentInfo(dir, Version.LATEST, SEGMENT, 10000, false, codec, null);
 
     if (VERBOSE) {
       System.out.println("TEST: now read postings");
@@ -334,54 +329,6 @@ public class TestCodecs extends LuceneTestCase {
 
     terms.close();
     dir.close();
-  }
-
-  public void testSepPositionAfterMerge() throws IOException {
-    final Directory dir = newDirectory();
-    final IndexWriterConfig config = newIndexWriterConfig(TEST_VERSION_CURRENT,
-      new MockAnalyzer(random()));
-    config.setMergePolicy(newLogMergePolicy());
-    config.setCodec(TestUtil.alwaysPostingsFormat(new MockSepPostingsFormat()));
-    final IndexWriter writer = new IndexWriter(dir, config);
-
-    try {
-      final PhraseQuery pq = new PhraseQuery();
-      pq.add(new Term("content", "bbb"));
-      pq.add(new Term("content", "ccc"));
-
-      final Document doc = new Document();
-      FieldType customType = new FieldType(TextField.TYPE_NOT_STORED);
-      customType.setOmitNorms(true);
-      doc.add(newField("content", "aaa bbb ccc ddd", customType));
-
-      // add document and force commit for creating a first segment
-      writer.addDocument(doc);
-      writer.commit();
-
-      ScoreDoc[] results = this.search(writer, pq, 5);
-      assertEquals(1, results.length);
-      assertEquals(0, results[0].doc);
-
-      // add document and force commit for creating a second segment
-      writer.addDocument(doc);
-      writer.commit();
-
-      // at this point, there should be at least two segments
-      results = this.search(writer, pq, 5);
-      assertEquals(2, results.length);
-      assertEquals(0, results[0].doc);
-
-      writer.forceMerge(1);
-
-      // optimise to merge the segments.
-      results = this.search(writer, pq, 5);
-      assertEquals(2, results.length);
-      assertEquals(0, results[0].doc);
-    }
-    finally {
-      writer.close();
-      dir.close();
-    }
   }
 
   private ScoreDoc[] search(final IndexWriter writer, final Query q, final int n) throws IOException {
@@ -854,11 +801,22 @@ public class TestCodecs extends LuceneTestCase {
   private void write(final FieldInfos fieldInfos, final Directory dir, final FieldData[] fields) throws Throwable {
 
     final Codec codec = Codec.getDefault();
-    final SegmentInfo si = new SegmentInfo(dir, Constants.LUCENE_MAIN_VERSION, SEGMENT, 10000, false, codec, null);
+    final SegmentInfo si = new SegmentInfo(dir, Version.LATEST, SEGMENT, 10000, false, codec, null);
     final SegmentWriteState state = new SegmentWriteState(InfoStream.getDefault(), dir, si, fieldInfos, null, newIOContext(random()));
 
     Arrays.sort(fields);
-    codec.postingsFormat().fieldsConsumer(state).write(new DataFields(fields));
+    FieldsConsumer consumer = codec.postingsFormat().fieldsConsumer(state);
+    boolean success = false;
+    try {
+      consumer.write(new DataFields(fields));
+      success = true;
+    } finally {
+      if (success) {
+        IOUtils.close(consumer);
+      } else {
+        IOUtils.closeWhileHandlingException(consumer);
+      }
+    }
   }
   
   public void testDocsOnlyFreq() throws Exception {
@@ -866,8 +824,7 @@ public class TestCodecs extends LuceneTestCase {
     // returns 1 in docsEnum.freq()
     Directory dir = newDirectory();
     Random random = random();
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random)));
     // we don't need many documents to assert this, but don't use one document either
     int numDocs = atLeast(random, 50);
     for (int i = 0; i < numDocs; i++) {
@@ -886,31 +843,6 @@ public class TestCodecs extends LuceneTestCase {
       }
     }
     reader.close();
-    
-    dir.close();
-  }
-  
-  public void testDisableImpersonation() throws Exception {
-    Codec[] oldCodecs = new Codec[] { new Lucene40RWCodec(), new Lucene41RWCodec(), new Lucene42RWCodec() };
-    Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    conf.setCodec(oldCodecs[random().nextInt(oldCodecs.length)]);
-    IndexWriter writer = new IndexWriter(dir, conf);
-    
-    Document doc = new Document();
-    doc.add(new StringField("f", "bar", Store.YES));
-    doc.add(new NumericDocValuesField("n", 18L));
-    writer.addDocument(doc);
-    
-    OLD_FORMAT_IMPERSONATION_IS_ACTIVE = false;
-    try {
-      writer.close();
-      fail("should not have succeeded to impersonate an old format!");
-    } catch (UnsupportedOperationException e) {
-      writer.rollback();
-    } finally {
-      OLD_FORMAT_IMPERSONATION_IS_ACTIVE = true;
-    }
     
     dir.close();
   }

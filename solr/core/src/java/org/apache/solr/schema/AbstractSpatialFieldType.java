@@ -40,6 +40,7 @@ import org.apache.lucene.spatial.SpatialStrategy;
 import org.apache.lucene.spatial.query.SpatialArgs;
 import org.apache.lucene.spatial.query.SpatialArgsParser;
 import org.apache.lucene.spatial.query.SpatialOperation;
+import org.apache.lucene.uninverting.UninvertingReader.Type;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.response.TextResponseWriter;
@@ -126,6 +127,11 @@ public abstract class AbstractSpatialFieldType<T extends SpatialStrategy> extend
   @Override
   public final Field createField(SchemaField field, Object val, float boost) {
     throw new IllegalStateException("instead call createFields() because isPolyField() is true");
+  }
+
+  @Override
+  public Type getUninversionType(SchemaField sf) {
+    return null;
   }
 
   @Override
@@ -245,10 +251,10 @@ public abstract class AbstractSpatialFieldType<T extends SpatialStrategy> extend
 
   @Override
   public Query getFieldQuery(QParser parser, SchemaField field, String externalVal) {
-    return getQueryFromSpatialArgs(parser, field, parseSpatialArgs(externalVal));
+    return getQueryFromSpatialArgs(parser, field, parseSpatialArgs(parser, externalVal));
   }
 
-  protected SpatialArgs parseSpatialArgs(String externalVal) {
+  protected SpatialArgs parseSpatialArgs(QParser parser, String externalVal) {
     try {
       return argsParser.parse(externalVal, ctx);
     } catch (SolrException e) {
@@ -258,12 +264,16 @@ public abstract class AbstractSpatialFieldType<T extends SpatialStrategy> extend
     }
   }
 
-  private Query getQueryFromSpatialArgs(QParser parser, SchemaField field, SpatialArgs spatialArgs) {
+  protected Query getQueryFromSpatialArgs(QParser parser, SchemaField field, SpatialArgs spatialArgs) {
     T strategy = getStrategy(field.getName());
 
     SolrParams localParams = parser.getLocalParams();
-    String score = (localParams == null ? null : localParams.get(SCORE_PARAM));
-    if (score == null || "none".equals(score) || "".equals(score)) {
+    String scoreParam = (localParams == null ? null : localParams.get(SCORE_PARAM));
+
+    //We get the valueSource for the score then the filter and combine them.
+
+    ValueSource valueSource = getValueSourceFromSpatialArgs(parser, field, spatialArgs, scoreParam, strategy);
+    if (valueSource == null) {
       //FYI Solr FieldType doesn't have a getFilter(). We'll always grab
       // getQuery() but it's possible a strategy has a more efficient getFilter
       // that could be wrapped -- no way to know.
@@ -271,16 +281,6 @@ public abstract class AbstractSpatialFieldType<T extends SpatialStrategy> extend
       return strategy.makeQuery(spatialArgs); //ConstantScoreQuery
     }
 
-    //We get the valueSource for the score then the filter and combine them.
-    ValueSource valueSource;
-    if ("distance".equals(score)) {
-      double multiplier = 1.0;//TODO support units=kilometers
-      valueSource = strategy.makeDistanceValueSource(spatialArgs.getShape().getCenter(), multiplier);
-    } else if ("recipDistance".equals(score)) {
-      valueSource = strategy.makeRecipDistanceValueSource(spatialArgs.getShape());
-    } else {
-      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "'score' local-param must be one of 'none', 'distance', or 'recipDistance'");
-    }
     FunctionQuery functionQuery = new FunctionQuery(valueSource);
 
     if (localParams != null && !localParams.getBool(FILTER_PARAM, true))
@@ -288,6 +288,19 @@ public abstract class AbstractSpatialFieldType<T extends SpatialStrategy> extend
 
     Filter filter = strategy.makeFilter(spatialArgs);
     return new FilteredQuery(functionQuery, filter);
+  }
+
+  protected ValueSource getValueSourceFromSpatialArgs(QParser parser, SchemaField field, SpatialArgs spatialArgs, String score, T strategy) {
+    if (score == null || "none".equals(score) || "".equals(score)) {
+      return null;
+    } else if ("distance".equals(score)) {
+      double multiplier = 1.0;//TODO support units=kilometers
+      return strategy.makeDistanceValueSource(spatialArgs.getShape().getCenter(), multiplier);
+    } else if ("recipDistance".equals(score)) {
+      return strategy.makeRecipDistanceValueSource(spatialArgs.getShape());
+    } else {
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "'score' local-param must be one of 'none', 'distance', or 'recipDistance'");
+    }
   }
 
   /**

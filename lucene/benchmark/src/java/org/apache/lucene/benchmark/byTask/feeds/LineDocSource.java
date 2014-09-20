@@ -18,17 +18,19 @@ package org.apache.lucene.benchmark.byTask.feeds;
  */
 
 import java.io.BufferedReader;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Properties;
 
 import org.apache.lucene.benchmark.byTask.tasks.WriteLineDocTask;
 import org.apache.lucene.benchmark.byTask.utils.Config;
 import org.apache.lucene.benchmark.byTask.utils.StreamUtils;
+import org.apache.lucene.util.IOUtils;
 
 /**
  * A {@link ContentSource} reading one line at a time as a
@@ -169,7 +171,7 @@ public class LineDocSource extends ContentSource {
     }
   }
   
-  private File file;
+  private Path file;
   private BufferedReader reader;
   private int readCount;
 
@@ -275,9 +277,9 @@ public class LineDocSource extends ContentSource {
     if (fileName == null) {
       throw new IllegalArgumentException("docs.file must be set");
     }
-    file = new File(fileName).getAbsoluteFile();
+    file = Paths.get(fileName).toAbsolutePath();
     if (encoding == null) {
-      encoding = "UTF-8";
+      encoding = IOUtils.UTF_8;
     }
   }
 

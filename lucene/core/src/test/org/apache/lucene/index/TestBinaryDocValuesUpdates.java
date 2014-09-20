@@ -1,7 +1,6 @@
 package org.apache.lucene.index;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Random;
 import java.util.Set;
@@ -10,15 +9,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.MockTokenizer;
-import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.DocValuesFormat;
 import org.apache.lucene.codecs.asserting.AssertingDocValuesFormat;
-import org.apache.lucene.codecs.lucene40.Lucene40RWCodec;
-import org.apache.lucene.codecs.lucene41.Lucene41RWCodec;
-import org.apache.lucene.codecs.lucene42.Lucene42RWCodec;
-import org.apache.lucene.codecs.lucene45.Lucene45DocValuesFormat;
-import org.apache.lucene.codecs.lucene45.Lucene45RWCodec;
-import org.apache.lucene.codecs.lucene46.Lucene46Codec;
+import org.apache.lucene.codecs.lucene410.Lucene410Codec;
+import org.apache.lucene.codecs.lucene410.Lucene410DocValuesFormat;
 import org.apache.lucene.document.BinaryDocValuesField;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field.Store;
@@ -27,12 +21,14 @@ import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.MockDirectoryWrapper;
+import org.apache.lucene.store.NRTCachingDirectory;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.TestUtil;
+import org.junit.Test;
 
 import com.carrotsearch.randomizedtesting.generators.RandomPicks;
 
@@ -53,16 +49,15 @@ import com.carrotsearch.randomizedtesting.generators.RandomPicks;
  * limitations under the License.
  */
 
-@SuppressCodecs({"Lucene40","Lucene41","Lucene42","Lucene45"})
 public class TestBinaryDocValuesUpdates extends LuceneTestCase {
 
-  static long getValue(BinaryDocValues bdv, int idx, BytesRef scratch) {
-    bdv.get(idx, scratch);
-    idx = scratch.offset;
-    byte b = scratch.bytes[idx++];
+  static long getValue(BinaryDocValues bdv, int idx) {
+    BytesRef term = bdv.get(idx);
+    idx = term.offset;
+    byte b = term.bytes[idx++];
     long value = b & 0x7FL;
     for (int shift = 7; (b & 0x80L) != 0; shift += 7) {
-      b = scratch.bytes[idx++];
+      b = term.bytes[idx++];
       value |= (b & 0x7FL) << shift;
     }
     return value;
@@ -90,8 +85,8 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testUpdatesAreFlushed() throws IOException {
     Directory dir = newDirectory();
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)).setRAMBufferSizeMB(0.00000001));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false))
+                                                .setRAMBufferSizeMB(0.00000001));
     writer.addDocument(doc(0)); // val=1
     writer.addDocument(doc(1)); // val=2
     writer.addDocument(doc(3)); // val=2
@@ -112,7 +107,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testSimple() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     // make sure random config doesn't flush on us
     conf.setMaxBufferedDocs(10);
     conf.setRAMBufferSizeMB(IndexWriterConfig.DISABLE_AUTO_FLUSH);
@@ -136,9 +131,8 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     assertEquals(1, reader.leaves().size());
     AtomicReader r = reader.leaves().get(0).reader();
     BinaryDocValues bdv = r.getBinaryDocValues("val");
-    BytesRef scratch = new BytesRef();
-    assertEquals(2, getValue(bdv, 0, scratch));
-    assertEquals(2, getValue(bdv, 1, scratch));
+    assertEquals(2, getValue(bdv, 0));
+    assertEquals(2, getValue(bdv, 1));
     reader.close();
     
     dir.close();
@@ -146,9 +140,9 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testUpdateFewSegments() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     conf.setMaxBufferedDocs(2); // generate few segments
-    conf.setMergePolicy(NoMergePolicy.COMPOUND_FILES); // prevent merges for this test
+    conf.setMergePolicy(NoMergePolicy.INSTANCE); // prevent merges for this test
     IndexWriter writer = new IndexWriter(dir, conf);
     int numDocs = 10;
     long[] expectedValues = new long[numDocs];
@@ -176,14 +170,13 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
       writer.close();
     }
     
-    BytesRef scratch = new BytesRef();
     for (AtomicReaderContext context : reader.leaves()) {
       AtomicReader r = context.reader();
       BinaryDocValues bdv = r.getBinaryDocValues("val");
       assertNotNull(bdv);
       for (int i = 0; i < r.maxDoc(); i++) {
         long expected = expectedValues[i + context.docBase];
-        long actual = getValue(bdv, i, scratch);
+        long actual = getValue(bdv, i);
         assertEquals(expected, actual);
       }
     }
@@ -194,7 +187,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testReopen() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir, conf);
     writer.addDocument(doc(0));
     writer.addDocument(doc(1));
@@ -219,22 +212,22 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     assertNotNull(reader2);
     assertTrue(reader1 != reader2);
 
-    BytesRef scratch = new BytesRef();
     BinaryDocValues bdv1 = reader1.leaves().get(0).reader().getBinaryDocValues("val");
     BinaryDocValues bdv2 = reader2.leaves().get(0).reader().getBinaryDocValues("val");
-    assertEquals(1, getValue(bdv1, 0, scratch));
-    assertEquals(10, getValue(bdv2, 0, scratch));
-    
-    IOUtils.close(writer, reader1, reader2, dir);
+    assertEquals(1, getValue(bdv1, 0));
+    assertEquals(10, getValue(bdv2, 0));
+
+    writer.close();
+    IOUtils.close(reader1, reader2, dir);
   }
   
   public void testUpdatesAndDeletes() throws Exception {
     // create an index with a segment with only deletes, a segment with both
     // deletes and updates and a segment with only updates
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     conf.setMaxBufferedDocs(10); // control segment flushing
-    conf.setMergePolicy(NoMergePolicy.COMPOUND_FILES); // prevent merges for this test
+    conf.setMergePolicy(NoMergePolicy.INSTANCE); // prevent merges for this test
     IndexWriter writer = new IndexWriter(dir, conf);
     
     for (int i = 0; i < 6; i++) {
@@ -270,9 +263,8 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     
     long[] expectedValues = new long[] { 1, 2, 3, 17, 5, 17};
     BinaryDocValues bdv = slow.getBinaryDocValues("val");
-    BytesRef scratch = new BytesRef();
     for (int i = 0; i < expectedValues.length; i++) {
-      assertEquals(expectedValues[i], getValue(bdv, i, scratch));
+      assertEquals(expectedValues[i], getValue(bdv, i));
     }
     
     reader.close();
@@ -282,7 +274,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   public void testUpdatesWithDeletes() throws Exception {
     // update and delete different documents in the same commit session
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     conf.setMaxBufferedDocs(10); // control segment flushing
     IndexWriter writer = new IndexWriter(dir, conf);
     
@@ -307,7 +299,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     
     AtomicReader r = reader.leaves().get(0).reader();
     assertFalse(r.getLiveDocs().get(0));
-    assertEquals(17, getValue(r.getBinaryDocValues("val"), 1, new BytesRef()));
+    assertEquals(17, getValue(r.getBinaryDocValues("val"), 1));
     
     reader.close();
     dir.close();
@@ -316,7 +308,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   public void testUpdateAndDeleteSameDocument() throws Exception {
     // update and delete same document in same commit session
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     conf.setMaxBufferedDocs(10); // control segment flushing
     IndexWriter writer = new IndexWriter(dir, conf);
     
@@ -341,7 +333,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     
     AtomicReader r = reader.leaves().get(0).reader();
     assertFalse(r.getLiveDocs().get(0));
-    assertEquals(1, getValue(r.getBinaryDocValues("val"), 0, new BytesRef())); // deletes are currently applied first
+    assertEquals(1, getValue(r.getBinaryDocValues("val"), 0)); // deletes are currently applied first
     
     reader.close();
     dir.close();
@@ -349,7 +341,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testMultipleDocValuesTypes() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     conf.setMaxBufferedDocs(10); // prevent merges
     IndexWriter writer = new IndexWriter(dir, conf);
     
@@ -375,20 +367,19 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     BinaryDocValues bdv = r.getBinaryDocValues("bdv");
     SortedDocValues sdv = r.getSortedDocValues("sdv");
     SortedSetDocValues ssdv = r.getSortedSetDocValues("ssdv");
-    BytesRef scratch = new BytesRef();
     for (int i = 0; i < r.maxDoc(); i++) {
       assertEquals(i, ndv.get(i));
-      assertEquals(17, getValue(bdv, i, scratch));
-      sdv.get(i, scratch);
-      assertEquals(new BytesRef(Integer.toString(i)), scratch);
+      assertEquals(17, getValue(bdv, i));
+      BytesRef term = sdv.get(i);
+      assertEquals(new BytesRef(Integer.toString(i)), term);
       ssdv.setDocument(i);
       long ord = ssdv.nextOrd();
-      ssdv.lookupOrd(ord, scratch);
-      assertEquals(i, Integer.parseInt(scratch.utf8ToString()));
+      term = ssdv.lookupOrd(ord);
+      assertEquals(i, Integer.parseInt(term.utf8ToString()));
       if (i != 0) {
         ord = ssdv.nextOrd();
-        ssdv.lookupOrd(ord, scratch);
-        assertEquals(i * 2, Integer.parseInt(scratch.utf8ToString()));
+        term = ssdv.lookupOrd(ord);
+        assertEquals(i * 2, Integer.parseInt(term.utf8ToString()));
       }
       assertEquals(SortedSetDocValues.NO_MORE_ORDS, ssdv.nextOrd());
     }
@@ -399,7 +390,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testMultipleBinaryDocValues() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     conf.setMaxBufferedDocs(10); // prevent merges
     IndexWriter writer = new IndexWriter(dir, conf);
     
@@ -421,10 +412,9 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     
     BinaryDocValues bdv1 = r.getBinaryDocValues("bdv1");
     BinaryDocValues bdv2 = r.getBinaryDocValues("bdv2");
-    BytesRef scratch = new BytesRef();
     for (int i = 0; i < r.maxDoc(); i++) {
-      assertEquals(17, getValue(bdv1, i, scratch));
-      assertEquals(i, getValue(bdv2, i, scratch));
+      assertEquals(17, getValue(bdv1, i));
+      assertEquals(i, getValue(bdv2, i));
     }
     
     reader.close();
@@ -433,7 +423,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testDocumentWithNoValue() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir, conf);
     
     for (int i = 0; i < 2; i++) {
@@ -453,84 +443,9 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     final DirectoryReader reader = DirectoryReader.open(dir);
     AtomicReader r = reader.leaves().get(0).reader();
     BinaryDocValues bdv = r.getBinaryDocValues("bdv");
-    BytesRef scratch = new BytesRef();
     for (int i = 0; i < r.maxDoc(); i++) {
-      assertEquals(17, getValue(bdv, i, scratch));
+      assertEquals(17, getValue(bdv, i));
     }
-    
-    reader.close();
-    dir.close();
-  }
-  
-  public void testUnsetValue() throws Exception {
-    assumeTrue("codec does not support docsWithField", defaultCodecSupportsDocsWithField());
-    Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    IndexWriter writer = new IndexWriter(dir, conf);
-    
-    for (int i = 0; i < 2; i++) {
-      Document doc = new Document();
-      doc.add(new StringField("id", "doc" + i, Store.NO));
-      doc.add(new BinaryDocValuesField("bdv", toBytes(5L)));
-      writer.addDocument(doc);
-    }
-    writer.commit();
-    
-    // unset the value of 'doc0'
-    writer.updateBinaryDocValue(new Term("id", "doc0"), "bdv", null);
-    writer.close();
-    
-    final DirectoryReader reader = DirectoryReader.open(dir);
-    AtomicReader r = reader.leaves().get(0).reader();
-    BinaryDocValues bdv = r.getBinaryDocValues("bdv");
-    BytesRef scratch = new BytesRef();
-    for (int i = 0; i < r.maxDoc(); i++) {
-      if (i == 0) {
-        bdv.get(i, scratch);
-        assertEquals(0, scratch.length);
-      } else {
-        assertEquals(5, getValue(bdv, i, scratch));
-      }
-    }
-    
-    Bits docsWithField = r.getDocsWithField("bdv");
-    assertFalse(docsWithField.get(0));
-    assertTrue(docsWithField.get(1));
-    
-    reader.close();
-    dir.close();
-  }
-  
-  public void testUnsetAllValues() throws Exception {
-    assumeTrue("codec does not support docsWithField", defaultCodecSupportsDocsWithField());
-    Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    IndexWriter writer = new IndexWriter(dir, conf);
-    
-    for (int i = 0; i < 2; i++) {
-      Document doc = new Document();
-      doc.add(new StringField("id", "doc", Store.NO));
-      doc.add(new BinaryDocValuesField("bdv", toBytes(5L)));
-      writer.addDocument(doc);
-    }
-    writer.commit();
-    
-    // unset the value of 'doc'
-    writer.updateBinaryDocValue(new Term("id", "doc"), "bdv", null);
-    writer.close();
-    
-    final DirectoryReader reader = DirectoryReader.open(dir);
-    AtomicReader r = reader.leaves().get(0).reader();
-    BinaryDocValues bdv = r.getBinaryDocValues("bdv");
-    BytesRef scratch = new BytesRef();
-    for (int i = 0; i < r.maxDoc(); i++) {
-      bdv.get(i, scratch);
-      assertEquals(0, scratch.length);
-    }
-    
-    Bits docsWithField = r.getDocsWithField("bdv");
-    assertFalse(docsWithField.get(0));
-    assertFalse(docsWithField.get(1));
     
     reader.close();
     dir.close();
@@ -540,7 +455,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     // we don't support adding new fields or updating existing non-binary-dv
     // fields through binary updates
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir, conf);
     
     Document doc = new Document();
@@ -570,11 +485,11 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testDifferentDVFormatPerField() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    conf.setCodec(new Lucene46Codec() {
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
+    conf.setCodec(new Lucene410Codec() {
       @Override
       public DocValuesFormat getDocValuesFormatForField(String field) {
-        return new Lucene45DocValuesFormat();
+        return new Lucene410DocValuesFormat();
       }
     });
     IndexWriter writer = new IndexWriter(dir, conf);
@@ -595,11 +510,10 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     AtomicReader r = SlowCompositeReaderWrapper.wrap(reader);
     BinaryDocValues bdv = r.getBinaryDocValues("bdv");
     SortedDocValues sdv = r.getSortedDocValues("sorted");
-    BytesRef scratch = new BytesRef();
     for (int i = 0; i < r.maxDoc(); i++) {
-      assertEquals(17, getValue(bdv, i, scratch));
-      sdv.get(i, scratch);
-      assertEquals(new BytesRef("value"), scratch);
+      assertEquals(17, getValue(bdv, i));
+      BytesRef term = sdv.get(i);
+      assertEquals(new BytesRef("value"), term);
     }
     
     reader.close();
@@ -608,7 +522,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testUpdateSameDocMultipleTimes() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir, conf);
     
     Document doc = new Document();
@@ -625,9 +539,8 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     final DirectoryReader reader = DirectoryReader.open(dir);
     final AtomicReader r = SlowCompositeReaderWrapper.wrap(reader);
     BinaryDocValues bdv = r.getBinaryDocValues("bdv");
-    BytesRef scratch = new BytesRef();
     for (int i = 0; i < r.maxDoc(); i++) {
-      assertEquals(3, getValue(bdv, i, scratch));
+      assertEquals(3, getValue(bdv, i));
     }
     reader.close();
     dir.close();
@@ -636,8 +549,8 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   public void testSegmentMerges() throws Exception {
     Directory dir = newDirectory();
     Random random = random();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random));
-    IndexWriter writer = new IndexWriter(dir, conf.clone());
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random));
+    IndexWriter writer = new IndexWriter(dir, conf);
     
     int docid = 0;
     int numRounds = atLeast(10);
@@ -664,7 +577,8 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
         writer.commit();
       } else if (random.nextDouble() < 0.1) {
         writer.close();
-        writer = new IndexWriter(dir, conf.clone());
+        conf = newIndexWriterConfig(new MockAnalyzer(random));
+        writer = new IndexWriter(dir, conf);
       }
 
       // add another document with the current value, to be sure forceMerge has
@@ -693,9 +607,8 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
       assertNull("index should have no deletes after forceMerge", r.getLiveDocs());
       BinaryDocValues bdv = r.getBinaryDocValues("bdv");
       assertNotNull(bdv);
-      BytesRef scratch = new BytesRef();
       for (int i = 0; i < r.maxDoc(); i++) {
-        assertEquals(value, getValue(bdv, i, scratch));
+        assertEquals(value, getValue(bdv, i));
       }
       reader.close();
     }
@@ -707,7 +620,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   public void testUpdateDocumentByMultipleTerms() throws Exception {
     // make sure the order of updates is respected, even when multiple terms affect same document
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir, conf);
     
     Document doc = new Document();
@@ -725,9 +638,8 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     final DirectoryReader reader = DirectoryReader.open(dir);
     final AtomicReader r = SlowCompositeReaderWrapper.wrap(reader);
     BinaryDocValues bdv = r.getBinaryDocValues("bdv");
-    BytesRef scratch = new BytesRef();
     for (int i = 0; i < r.maxDoc(); i++) {
-      assertEquals(3, getValue(bdv, i, scratch));
+      assertEquals(3, getValue(bdv, i));
     }
     reader.close();
     dir.close();
@@ -736,7 +648,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   public void testManyReopensAndFields() throws Exception {
     Directory dir = newDirectory();
     final Random random = random();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random));
     LogMergePolicy lmp = newLogMergePolicy();
     lmp.setMergeFactor(3); // merge often
     conf.setMergePolicy(lmp);
@@ -753,8 +665,6 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     
     final int numFields = random.nextInt(4) + 3; // 3-7
     final long[] fieldValues = new long[numFields];
-    final boolean[] fieldHasValue = new boolean[numFields];
-    Arrays.fill(fieldHasValue, true);
     for (int i = 0; i < fieldValues.length; i++) {
       fieldValues[i] = 1;
     }
@@ -776,24 +686,10 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
         ++docID;
       }
       
-      // if field's value was unset before, unset it from all new added documents too
-      for (int field = 0; field < fieldHasValue.length; field++) {
-        if (!fieldHasValue[field]) {
-          writer.updateBinaryDocValue(new Term("key", "all"), "f" + field, null);
-        }
-      }
-      
       int fieldIdx = random.nextInt(fieldValues.length);
       String updateField = "f" + fieldIdx;
-      if (random.nextBoolean()) {
-//        System.out.println("[" + Thread.currentThread().getName() + "]: unset field '" + updateField + "'");
-        fieldHasValue[fieldIdx] = false;
-        writer.updateBinaryDocValue(new Term("key", "all"), updateField, null);
-      } else {
-        fieldHasValue[fieldIdx] = true;
-        writer.updateBinaryDocValue(new Term("key", "all"), updateField, toBytes(++fieldValues[fieldIdx]));
-//        System.out.println("[" + Thread.currentThread().getName() + "]: updated field '" + updateField + "' to value " + fieldValues[fieldIdx]);
-      }
+//      System.out.println("[" + Thread.currentThread().getName() + "]: updated field '" + updateField + "' to value " + fieldValues[fieldIdx]);
+      writer.updateBinaryDocValue(new Term("key", "all"), updateField, toBytes(++fieldValues[fieldIdx]));
       
       if (random.nextDouble() < 0.2) {
         int deleteDoc = random.nextInt(docID); // might also delete an already deleted document, ok!
@@ -813,7 +709,6 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
       reader = newReader;
 //      System.out.println("[" + Thread.currentThread().getName() + "]: reopened reader: " + reader);
       assertTrue(reader.numDocs() > 0); // we delete at most one document per round
-      BytesRef scratch = new BytesRef();
       for (AtomicReaderContext context : reader.leaves()) {
         AtomicReader r = context.reader();
 //        System.out.println(((SegmentReader) r).getSegmentName());
@@ -827,29 +722,26 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
           for (int doc = 0; doc < maxDoc; doc++) {
             if (liveDocs == null || liveDocs.get(doc)) {
 //              System.out.println("doc=" + (doc + context.docBase) + " f='" + f + "' vslue=" + getValue(bdv, doc, scratch));
-              if (fieldHasValue[field]) {
-                assertTrue(docsWithField.get(doc));
-                assertEquals("invalid value for doc=" + doc + ", field=" + f + ", reader=" + r, fieldValues[field], getValue(bdv, doc, scratch));
-              } else {
-                assertFalse(docsWithField.get(doc));
-              }
+              assertTrue(docsWithField.get(doc));
+              assertEquals("invalid value for doc=" + doc + ", field=" + f + ", reader=" + r, fieldValues[field], getValue(bdv, doc));
             }
           }
         }
       }
 //      System.out.println();
     }
-    
-    IOUtils.close(writer, reader, dir);
+
+    writer.close();
+    IOUtils.close(reader, dir);
   }
   
   public void testUpdateSegmentWithNoDocValues() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     // prevent merges, otherwise by the time updates are applied
     // (writer.close()), the segments might have merged and that update becomes
     // legit.
-    conf.setMergePolicy(NoMergePolicy.COMPOUND_FILES);
+    conf.setMergePolicy(NoMergePolicy.INSTANCE);
     IndexWriter writer = new IndexWriter(dir, conf);
     
     // first segment with BDV
@@ -881,17 +773,16 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     writer.close();
 
     DirectoryReader reader = DirectoryReader.open(dir);
-    BytesRef scratch = new BytesRef();
     for (AtomicReaderContext context : reader.leaves()) {
       AtomicReader r = context.reader();
       BinaryDocValues bdv = r.getBinaryDocValues("bdv");
       Bits docsWithField = r.getDocsWithField("bdv");
       assertNotNull(docsWithField);
       assertTrue(docsWithField.get(0));
-      assertEquals(5L, getValue(bdv, 0, scratch));
+      assertEquals(5L, getValue(bdv, 0));
       assertFalse(docsWithField.get(1));
-      bdv.get(1, scratch);
-      assertEquals(0, scratch.length);
+      BytesRef term = bdv.get(1);
+      assertEquals(0, term.length);
     }
     reader.close();
 
@@ -900,11 +791,11 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testUpdateSegmentWithPostingButNoDocValues() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     // prevent merges, otherwise by the time updates are applied
     // (writer.close()), the segments might have merged and that update becomes
     // legit.
-    conf.setMergePolicy(NoMergePolicy.COMPOUND_FILES);
+    conf.setMergePolicy(NoMergePolicy.INSTANCE);
     IndexWriter writer = new IndexWriter(dir, conf);
     
     // first segment with BDV
@@ -927,12 +818,11 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     writer.close();
 
     DirectoryReader reader = DirectoryReader.open(dir);
-    BytesRef scratch = new BytesRef();
     for (AtomicReaderContext context : reader.leaves()) {
       AtomicReader r = context.reader();
       BinaryDocValues bdv = r.getBinaryDocValues("bdv");
       for (int i = 0; i < r.maxDoc(); i++) {
-        assertEquals(5L, getValue(bdv, i, scratch));
+        assertEquals(5L, getValue(bdv, i));
       }
     }
     reader.close();
@@ -944,7 +834,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     // this used to fail because FieldInfos.Builder neglected to update
     // globalFieldMaps.docValueTypes map
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir, conf);
     
     Document doc = new Document();
@@ -957,51 +847,19 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     
     DirectoryReader r = DirectoryReader.open(dir);
     BinaryDocValues bdv = r.leaves().get(0).reader().getBinaryDocValues("f");
-    assertEquals(17, getValue(bdv, 0, new BytesRef()));
+    assertEquals(17, getValue(bdv, 0));
     r.close();
-    
-    dir.close();
-  }
-  
-  public void testUpdateOldSegments() throws Exception {
-    Codec[] oldCodecs = new Codec[] { new Lucene40RWCodec(), new Lucene41RWCodec(), new Lucene42RWCodec(), new Lucene45RWCodec() };
-    Directory dir = newDirectory();
-    
-    boolean oldValue = OLD_FORMAT_IMPERSONATION_IS_ACTIVE;
-    // create a segment with an old Codec
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    conf.setCodec(oldCodecs[random().nextInt(oldCodecs.length)]);
-    OLD_FORMAT_IMPERSONATION_IS_ACTIVE = true;
-    IndexWriter writer = new IndexWriter(dir, conf);
-    Document doc = new Document();
-    doc.add(new StringField("id", "doc", Store.NO));
-    doc.add(new BinaryDocValuesField("f", toBytes(5L)));
-    writer.addDocument(doc);
-    writer.close();
-    
-    conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    writer = new IndexWriter(dir, conf);
-    writer.updateBinaryDocValue(new Term("id", "doc"), "f", toBytes(4L));
-    OLD_FORMAT_IMPERSONATION_IS_ACTIVE = false;
-    try {
-      writer.close();
-      fail("should not have succeeded to update a segment written with an old Codec");
-    } catch (UnsupportedOperationException e) {
-      writer.rollback(); 
-    } finally {
-      OLD_FORMAT_IMPERSONATION_IS_ACTIVE = oldValue;
-    }
     
     dir.close();
   }
   
   public void testStressMultiThreading() throws Exception {
     final Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     final IndexWriter writer = new IndexWriter(dir, conf);
     
     // create index
-    final int numThreads = TestUtil.nextInt(random(), 3, 6);
+    final int numFields = TestUtil.nextInt(random(), 1, 4);
     final int numDocs = atLeast(2000);
     for (int i = 0; i < numDocs; i++) {
       Document doc = new Document();
@@ -1013,7 +871,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
       else if (group < 0.8) g = "g2";
       else g = "g3";
       doc.add(new StringField("updKey", g, Store.NO));
-      for (int j = 0; j < numThreads; j++) {
+      for (int j = 0; j < numFields; j++) {
         long value = random().nextInt();
         doc.add(new BinaryDocValuesField("f" + j, toBytes(value)));
         doc.add(new BinaryDocValuesField("cf" + j, toBytes(value * 2))); // control, always updated to f * 2
@@ -1021,14 +879,13 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
       writer.addDocument(doc);
     }
     
+    final int numThreads = TestUtil.nextInt(random(), 3, 6);
     final CountDownLatch done = new CountDownLatch(numThreads);
     final AtomicInteger numUpdates = new AtomicInteger(atLeast(100));
     
     // same thread updates a field as well as reopens
     Thread[] threads = new Thread[numThreads];
     for (int i = 0; i < threads.length; i++) {
-      final String f = "f" + i;
-      final String cf = "cf" + i;
       threads[i] = new Thread("UpdateThread-" + i) {
         @Override
         public void run() {
@@ -1043,15 +900,13 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
               else if (group < 0.5) t = new Term("updKey", "g1");
               else if (group < 0.8) t = new Term("updKey", "g2");
               else t = new Term("updKey", "g3");
-//              System.out.println("[" + Thread.currentThread().getName() + "] numUpdates=" + numUpdates + " updateTerm=" + t);
-              if (random.nextBoolean()) { // sometimes unset a value
-                writer.updateBinaryDocValue(t, f, null);
-                writer.updateBinaryDocValue(t, cf, null);
-              } else {
-                long updValue = random.nextInt();
-                writer.updateBinaryDocValue(t, f, toBytes(updValue));
-                writer.updateBinaryDocValue(t, cf, toBytes(updValue * 2));
-              }
+
+              final int field = random().nextInt(numFields);
+              final String f = "f" + field;
+              final String cf = "cf" + field;
+//              System.out.println("[" + Thread.currentThread().getName() + "] numUpdates=" + numUpdates + " updateTerm=" + t + " field=" + field);
+              long updValue = random.nextInt();
+              writer.updateDocValues(t, new BinaryDocValuesField(f, toBytes(updValue)), new BinaryDocValuesField(cf, toBytes(updValue*2)));
               
               if (random.nextDouble() < 0.2) {
                 // delete a random document
@@ -1104,10 +959,9 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     writer.close();
     
     DirectoryReader reader = DirectoryReader.open(dir);
-    BytesRef scratch = new BytesRef();
     for (AtomicReaderContext context : reader.leaves()) {
       AtomicReader r = context.reader();
-      for (int i = 0; i < numThreads; i++) {
+      for (int i = 0; i < numFields; i++) {
         BinaryDocValues bdv = r.getBinaryDocValues("f" + i);
         BinaryDocValues control = r.getBinaryDocValues("cf" + i);
         Bits docsWithBdv = r.getDocsWithField("f" + i);
@@ -1115,10 +969,9 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
         Bits liveDocs = r.getLiveDocs();
         for (int j = 0; j < r.maxDoc(); j++) {
           if (liveDocs == null || liveDocs.get(j)) {
-            assertEquals(docsWithBdv.get(j), docsWithControl.get(j));
-            if (docsWithBdv.get(j)) {
-              assertEquals(getValue(control, j, scratch), getValue(bdv, j, scratch) * 2);
-            }
+            assertTrue(docsWithBdv.get(j));
+            assertTrue(docsWithControl.get(j));
+            assertEquals(getValue(control, j), getValue(bdv, j) * 2);
           }
         }
       }
@@ -1131,7 +984,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   public void testUpdateDifferentDocsInDifferentGens() throws Exception {
     // update same document multiple times across generations
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     conf.setMaxBufferedDocs(4);
     IndexWriter writer = new IndexWriter(dir, conf);
     final int numDocs = atLeast(10);
@@ -1145,20 +998,18 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     }
     
     int numGens = atLeast(5);
-    BytesRef scratch = new BytesRef();
     for (int i = 0; i < numGens; i++) {
       int doc = random().nextInt(numDocs);
       Term t = new Term("id", "doc" + doc);
       long value = random().nextLong();
-      writer.updateBinaryDocValue(t, "f", toBytes(value));
-      writer.updateBinaryDocValue(t, "cf", toBytes(value * 2));
+      writer.updateDocValues(t, new BinaryDocValuesField("f", toBytes(value)), new BinaryDocValuesField("cf", toBytes(value*2)));
       DirectoryReader reader = DirectoryReader.open(writer, true);
       for (AtomicReaderContext context : reader.leaves()) {
         AtomicReader r = context.reader();
         BinaryDocValues fbdv = r.getBinaryDocValues("f");
         BinaryDocValues cfbdv = r.getBinaryDocValues("cf");
         for (int j = 0; j < r.maxDoc(); j++) {
-          assertEquals(getValue(cfbdv, j, scratch), getValue(fbdv, j, scratch) * 2);
+          assertEquals(getValue(cfbdv, j), getValue(fbdv, j) * 2);
         }
       }
       reader.close();
@@ -1169,15 +1020,15 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
 
   public void testChangeCodec() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    conf.setMergePolicy(NoMergePolicy.COMPOUND_FILES); // disable merges to simplify test assertions.
-    conf.setCodec(new Lucene46Codec() {
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
+    conf.setMergePolicy(NoMergePolicy.INSTANCE); // disable merges to simplify test assertions.
+    conf.setCodec(new Lucene410Codec() {
       @Override
       public DocValuesFormat getDocValuesFormatForField(String field) {
-        return new Lucene45DocValuesFormat();
+        return new Lucene410DocValuesFormat();
       }
     });
-    IndexWriter writer = new IndexWriter(dir, conf.clone());
+    IndexWriter writer = new IndexWriter(dir, conf);
     Document doc = new Document();
     doc.add(new StringField("id", "d0", Store.NO));
     doc.add(new BinaryDocValuesField("f1", toBytes(5L)));
@@ -1186,13 +1037,15 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     writer.close();
     
     // change format
-    conf.setCodec(new Lucene46Codec() {
+    conf = newIndexWriterConfig(new MockAnalyzer(random()));
+    conf.setMergePolicy(NoMergePolicy.INSTANCE); // disable merges to simplify test assertions.
+    conf.setCodec(new Lucene410Codec() {
       @Override
       public DocValuesFormat getDocValuesFormatForField(String field) {
         return new AssertingDocValuesFormat();
       }
     });
-    writer = new IndexWriter(dir, conf.clone());
+    writer = new IndexWriter(dir, conf);
     doc = new Document();
     doc.add(new StringField("id", "d1", Store.NO));
     doc.add(new BinaryDocValuesField("f1", toBytes(17L)));
@@ -1205,18 +1058,17 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     AtomicReader r = SlowCompositeReaderWrapper.wrap(reader);
     BinaryDocValues f1 = r.getBinaryDocValues("f1");
     BinaryDocValues f2 = r.getBinaryDocValues("f2");
-    BytesRef scratch = new BytesRef();
-    assertEquals(12L, getValue(f1, 0, scratch));
-    assertEquals(13L, getValue(f2, 0, scratch));
-    assertEquals(17L, getValue(f1, 1, scratch));
-    assertEquals(2L, getValue(f2, 1, scratch));
+    assertEquals(12L, getValue(f1, 0));
+    assertEquals(13L, getValue(f2, 0));
+    assertEquals(17L, getValue(f1, 1));
+    assertEquals(2L, getValue(f2, 1));
     reader.close();
     dir.close();
   }
 
   public void testAddIndexes() throws Exception {
     Directory dir1 = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir1, conf);
     
     final int numDocs = atLeast(50);
@@ -1242,12 +1094,11 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     // update some docs to a random value
     long value = random().nextInt();
     Term term = new Term("id", RandomPicks.randomFrom(random(), randomTerms));
-    writer.updateBinaryDocValue(term, "bdv", toBytes(value));
-    writer.updateBinaryDocValue(term, "control", toBytes(value * 2));
+    writer.updateDocValues(term, new BinaryDocValuesField("bdv", toBytes(value)), new BinaryDocValuesField("control", toBytes(value * 2)));
     writer.close();
     
     Directory dir2 = newDirectory();
-    conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    conf = newIndexWriterConfig(new MockAnalyzer(random()));
     writer = new IndexWriter(dir2, conf);
     if (random().nextBoolean()) {
       writer.addIndexes(dir1);
@@ -1259,13 +1110,12 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     writer.close();
     
     DirectoryReader reader = DirectoryReader.open(dir2);
-    BytesRef scratch = new BytesRef();
     for (AtomicReaderContext context : reader.leaves()) {
       AtomicReader r = context.reader();
       BinaryDocValues bdv = r.getBinaryDocValues("bdv");
       BinaryDocValues control = r.getBinaryDocValues("control");
       for (int i = 0; i < r.maxDoc(); i++) {
-        assertEquals(getValue(bdv, i, scratch)*2, getValue(control, i, scratch));
+        assertEquals(getValue(bdv, i)*2, getValue(control, i));
       }
     }
     reader.close();
@@ -1275,32 +1125,32 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
 
   public void testDeleteUnusedUpdatesFiles() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    // test explicitly needs files to always be actually deleted
+    if (dir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)dir).setEnableVirusScanner(false);
+    }
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir, conf);
     
     Document doc = new Document();
     doc.add(new StringField("id", "d0", Store.NO));
-    doc.add(new BinaryDocValuesField("f", toBytes(1L)));
+    doc.add(new BinaryDocValuesField("f1", toBytes(1L)));
+    doc.add(new BinaryDocValuesField("f2", toBytes(1L)));
     writer.addDocument(doc);
 
-    // create first gen of update files
-    writer.updateBinaryDocValue(new Term("id", "d0"), "f", toBytes(2L));
-    writer.commit();
-    int numFiles = dir.listAll().length;
-
-    DirectoryReader r = DirectoryReader.open(dir);
-    BytesRef scratch = new BytesRef();
-    assertEquals(2L, getValue(r.leaves().get(0).reader().getBinaryDocValues("f"), 0, scratch));
-    r.close();
-    
-    // create second gen of update files, first gen should be deleted
-    writer.updateBinaryDocValue(new Term("id", "d0"), "f", toBytes(5L));
-    writer.commit();
-    assertEquals(numFiles, dir.listAll().length);
-
-    r = DirectoryReader.open(dir);
-    assertEquals(5L, getValue(r.leaves().get(0).reader().getBinaryDocValues("f"), 0, scratch));
-    r.close();
+    // update each field twice to make sure all unneeded files are deleted
+    for (String f : new String[] { "f1", "f2" }) {
+      writer.updateBinaryDocValue(new Term("id", "d0"), f, toBytes(2L));
+      writer.commit();
+      int numFiles = dir.listAll().length;
+      
+      // update again, number of files shouldn't change (old field's gen is
+      // removed) 
+      writer.updateBinaryDocValue(new Term("id", "d0"), f, toBytes(3L));
+      writer.commit();
+      
+      assertEquals(numFiles, dir.listAll().length);
+    }
 
     writer.close();
     dir.close();
@@ -1310,7 +1160,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     // LUCENE-5248: make sure that when there are many updates, we don't use too much RAM
     Directory dir = newDirectory();
     final Random random = random();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random));
     conf.setRAMBufferSizeMB(IndexWriterConfig.DEFAULT_RAM_BUFFER_SIZE_MB);
     conf.setMaxBufferedDocs(IndexWriterConfig.DISABLE_AUTO_FLUSH); // don't flush by doc
     IndexWriter writer = new IndexWriter(dir, conf);
@@ -1352,21 +1202,20 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
       int field = random.nextInt(numBinaryFields);
       Term updateTerm = new Term("upd", RandomPicks.randomFrom(random, updateTerms));
       long value = random.nextInt();
-      writer.updateBinaryDocValue(updateTerm, "f" + field, toBytes(value));
-      writer.updateBinaryDocValue(updateTerm, "cf" + field, toBytes(value * 2));
+      writer.updateDocValues(updateTerm, new BinaryDocValuesField("f" + field, toBytes(value)), 
+          new BinaryDocValuesField("cf" + field, toBytes(value * 2)));
     }
 
     writer.close();
     
     DirectoryReader reader = DirectoryReader.open(dir);
-    BytesRef scratch = new BytesRef();
     for (AtomicReaderContext context : reader.leaves()) {
       for (int i = 0; i < numBinaryFields; i++) {
         AtomicReader r = context.reader();
         BinaryDocValues f = r.getBinaryDocValues("f" + i);
         BinaryDocValues cf = r.getBinaryDocValues("cf" + i);
         for (int j = 0; j < r.maxDoc(); j++) {
-          assertEquals("reader=" + r + ", field=f" + i + ", doc=" + j, getValue(cf, j, scratch), getValue(f, j, scratch) * 2);
+          assertEquals("reader=" + r + ", field=f" + i + ", doc=" + j, getValue(cf, j), getValue(f, j) * 2);
         }
       }
     }
@@ -1377,7 +1226,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testUpdatesOrder() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir, conf);
     
     Document doc = new Document();
@@ -1394,9 +1243,8 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     writer.close();
     
     DirectoryReader reader = DirectoryReader.open(dir);
-    BytesRef scratch = new BytesRef();
-    assertEquals(4, getValue(reader.leaves().get(0).reader().getBinaryDocValues("f1"), 0, scratch));
-    assertEquals(3, getValue(reader.leaves().get(0).reader().getBinaryDocValues("f2"), 0, scratch));
+    assertEquals(4, getValue(reader.leaves().get(0).reader().getBinaryDocValues("f1"), 0));
+    assertEquals(3, getValue(reader.leaves().get(0).reader().getBinaryDocValues("f2"), 0));
     reader.close();
     
     dir.close();
@@ -1404,7 +1252,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
   
   public void testUpdateAllDeletedSegment() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir, conf);
     
     Document doc = new Document();
@@ -1420,7 +1268,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     
     DirectoryReader reader = DirectoryReader.open(dir);
     assertEquals(1, reader.leaves().size());
-    assertEquals(2L, getValue(reader.leaves().get(0).reader().getBinaryDocValues("f1"), 0, new BytesRef()));
+    assertEquals(2L, getValue(reader.leaves().get(0).reader().getBinaryDocValues("f1"), 0));
     reader.close();
     
     dir.close();
@@ -1428,7 +1276,7 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
 
   public void testUpdateTwoNonexistingTerms() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir, conf);
     
     Document doc = new Document();
@@ -1442,10 +1290,41 @@ public class TestBinaryDocValuesUpdates extends LuceneTestCase {
     
     DirectoryReader reader = DirectoryReader.open(dir);
     assertEquals(1, reader.leaves().size());
-    assertEquals(1L, getValue(reader.leaves().get(0).reader().getBinaryDocValues("f1"), 0, new BytesRef()));
+    assertEquals(1L, getValue(reader.leaves().get(0).reader().getBinaryDocValues("f1"), 0));
     reader.close();
     
     dir.close();
+  }
+
+  @Test
+  public void testIOContext() throws Exception {
+    // LUCENE-5591: make sure we pass an IOContext with an approximate
+    // segmentSize in FlushInfo
+    Directory dir = newDirectory();
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
+    // we want a single large enough segment so that a doc-values update writes a large file
+    conf.setMergePolicy(NoMergePolicy.INSTANCE);
+    conf.setMaxBufferedDocs(Integer.MAX_VALUE); // manually flush
+    conf.setRAMBufferSizeMB(IndexWriterConfig.DISABLE_AUTO_FLUSH);
+    IndexWriter writer = new IndexWriter(dir, conf);
+    for (int i = 0; i < 100; i++) {
+      writer.addDocument(doc(i));
+    }
+    writer.commit();
+    writer.close();
+    
+    NRTCachingDirectory cachingDir = new NRTCachingDirectory(dir, 100, 1/(1024.*1024.));
+    conf = newIndexWriterConfig(new MockAnalyzer(random()));
+    // we want a single large enough segment so that a doc-values update writes a large file
+    conf.setMergePolicy(NoMergePolicy.INSTANCE);
+    conf.setMaxBufferedDocs(Integer.MAX_VALUE); // manually flush
+    conf.setRAMBufferSizeMB(IndexWriterConfig.DISABLE_AUTO_FLUSH);
+    writer = new IndexWriter(cachingDir, conf);
+    writer.updateBinaryDocValue(new Term("id", "doc-0"), "val", toBytes(100L));
+    DirectoryReader reader = DirectoryReader.open(writer, true); // flush
+    assertEquals(0, cachingDir.listCachedFiles().length);
+    
+    IOUtils.close(reader, writer, cachingDir);
   }
   
 }

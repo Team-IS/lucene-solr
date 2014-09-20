@@ -17,21 +17,19 @@ package org.apache.lucene.benchmark.byTask.feeds;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.CharsetDecoder;
-import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
 import org.apache.lucene.benchmark.byTask.utils.Config;
 import org.apache.lucene.benchmark.byTask.utils.StreamUtils;
-import org.apache.lucene.util.ThreadInterruptedException;
 import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.ThreadInterruptedException;
 import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
@@ -182,10 +180,7 @@ public class EnwikiContentSource extends ContentSource {
           if (localFileIS != null) { // null means fileIS was closed on us 
             try {
               // To work around a bug in XERCES (XERCESJ-1257), we assume the XML is always UTF8, so we simply provide reader.
-              CharsetDecoder decoder = IOUtils.CHARSET_UTF_8.newDecoder()
-                  .onMalformedInput(CodingErrorAction.REPORT)
-                  .onUnmappableCharacter(CodingErrorAction.REPORT);
-              reader.parse(new InputSource(new BufferedReader(new InputStreamReader(localFileIS, decoder))));
+              reader.parse(new InputSource(IOUtils.getDecodingReader(localFileIS, StandardCharsets.UTF_8)));
             } catch (IOException ioe) {
               synchronized(EnwikiContentSource.this) {
                 if (localFileIS != is) {
@@ -286,7 +281,7 @@ public class EnwikiContentSource extends ContentSource {
     return val == null ? -1 : val.intValue();
   }
   
-  private File file;
+  private Path file;
   private boolean keepImages = true;
   private InputStream is;
   private Parser parser = new Parser();
@@ -330,7 +325,7 @@ public class EnwikiContentSource extends ContentSource {
     keepImages = config.get("keep.image.only.docs", true);
     String fileName = config.get("docs.file", null);
     if (fileName != null) {
-      file = new File(fileName).getAbsoluteFile();
+      file = Paths.get(fileName).toAbsolutePath();
     }
   }
   

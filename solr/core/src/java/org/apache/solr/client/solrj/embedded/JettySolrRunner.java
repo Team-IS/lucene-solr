@@ -25,6 +25,7 @@ import java.util.LinkedList;
 import java.util.Random;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import javax.servlet.DispatcherType;
@@ -95,6 +96,8 @@ public class JettySolrRunner {
   private LinkedList<FilterHolder> extraFilters;
 
   private SSLConfig sslConfig;
+  
+  private int proxyPort = -1;
 
   public static class DebugFilter implements Filter {
     public int requestsToKeep = 10;
@@ -226,7 +229,6 @@ public class JettySolrRunner {
       sslInit(useSsl, sslcontext);
 
       final Connector connector;
-      final QueuedThreadPool threadPool;
       if ("SelectChannel".equals(connectorName)) {
         final SelectChannelConnector c = useSsl
           ? new SslSelectChannelConnector(sslcontext)
@@ -235,7 +237,6 @@ public class JettySolrRunner {
         c.setLowResourcesMaxIdleTime(1500);
         c.setSoLingerTime(0);
         connector = c;
-        threadPool = (QueuedThreadPool) c.getThreadPool();
       } else if ("Socket".equals(connectorName)) {
         final SocketConnector c = useSsl
           ? new SslSocketConnector(sslcontext)
@@ -243,44 +244,31 @@ public class JettySolrRunner {
         c.setReuseAddress(true);
         c.setSoLingerTime(0);
         connector = c;
-        threadPool = (QueuedThreadPool) c.getThreadPool();
       } else {
         throw new IllegalArgumentException("Illegal value for system property 'tests.jettyConnector': " + connectorName);
       }
 
       connector.setPort(port);
       connector.setHost("127.0.0.1");
-      if (threadPool != null) {
-        threadPool.setMaxThreads(10000);
-        threadPool.setMaxIdleTimeMs(5000);
-        threadPool.setMaxStopTimeMs(30000);
-      }
-      
+
+      // Connectors by default inherit server's thread pool.
+      QueuedThreadPool qtp = new QueuedThreadPool();
+      qtp.setMaxThreads(10000);
+      qtp.setMaxIdleTimeMs((int) TimeUnit.SECONDS.toMillis(5));
+      qtp.setMaxStopTimeMs((int) TimeUnit.MINUTES.toMillis(1));
+      server.setThreadPool(qtp);
+
       server.setConnectors(new Connector[] {connector});
       server.setSessionIdManager(new HashSessionIdManager(new Random()));
     } else {
-      
-      for (Connector connector : server.getConnectors()) {
-        QueuedThreadPool threadPool = null;
-        if (connector instanceof SocketConnector) {
-          threadPool = (QueuedThreadPool) ((SocketConnector) connector)
-              .getThreadPool();
-        }
-        if (connector instanceof SelectChannelConnector) {
-          threadPool = (QueuedThreadPool) ((SelectChannelConnector) connector)
-              .getThreadPool();
-        }
-        
-        if (threadPool != null) {
-          threadPool.setMaxThreads(10000);
-          threadPool.setMaxIdleTimeMs(5000);
-          if (!stopAtShutdown) {
-            threadPool.setMaxStopTimeMs(100);
-          }
-        }
-        
+      if (server.getThreadPool() == null) {
+        // Connectors by default inherit server's thread pool.
+        QueuedThreadPool qtp = new QueuedThreadPool();
+        qtp.setMaxThreads(10000);
+        qtp.setMaxIdleTimeMs((int) TimeUnit.SECONDS.toMillis(5));
+        qtp.setMaxStopTimeMs((int) TimeUnit.SECONDS.toMillis(1));
+        server.setThreadPool(qtp);
       }
-
     }
 
     // Initialize the servlets
@@ -477,7 +465,7 @@ public class JettySolrRunner {
     if (0 == conns.length) {
       throw new RuntimeException("Jetty Server has no Connectors");
     }
-    return conns[0].getLocalPort();
+    return (proxyPort != -1) ? proxyPort : conns[0].getLocalPort();
   }
   
   /**
@@ -489,7 +477,16 @@ public class JettySolrRunner {
     if (lastPort == -1) {
       throw new IllegalStateException("You cannot get the port until this instance has started");
     }
-    return lastPort;
+    return (proxyPort != -1) ? proxyPort : lastPort;
+  }
+  
+  /**
+   * Sets the port of a local socket proxy that sits infront of this server; if set
+   * then all client traffic will flow through the proxy, giving us the ability to
+   * simulate network partitions very easily.
+   */
+  public void setProxyPort(int proxyPort) {
+    this.proxyPort = proxyPort;
   }
 
   /**

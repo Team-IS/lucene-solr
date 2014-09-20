@@ -17,10 +17,9 @@ package org.apache.lucene.store;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 import org.apache.lucene.analysis.Analyzer;
@@ -36,17 +35,26 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LineFileDocs;
-import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
 
-public class TestNRTCachingDirectory extends LuceneTestCase {
+public class TestNRTCachingDirectory extends BaseDirectoryTestCase {
+
+  // TODO: RAMDir used here, because its still too slow to use e.g. SimpleFS
+  // for the threads tests... maybe because of the synchronization in listAll?
+  // would be good to investigate further...
+  @Override
+  protected Directory getDirectory(Path path) throws IOException {
+    return new NRTCachingDirectory(new RAMDirectory(),
+                                   .1 + 2.0*random().nextDouble(),
+                                   .1 + 5.0*random().nextDouble());
+  }
 
   public void testNRTAndCommit() throws Exception {
     Directory dir = newDirectory();
     NRTCachingDirectory cachedDir = new NRTCachingDirectory(dir, 2.0, 25.0);
     MockAnalyzer analyzer = new MockAnalyzer(random());
     analyzer.setMaxTokenLength(TestUtil.nextInt(random(), 1, IndexWriter.MAX_TERM_LENGTH));
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer);
+    IndexWriterConfig conf = newIndexWriterConfig(analyzer);
     RandomIndexWriter w = new RandomIndexWriter(random(), cachedDir, conf);
     final LineFileDocs docs = new LineFileDocs(random(), true);
     final int numDocs = TestUtil.nextInt(random(), 100, 400);
@@ -107,83 +115,28 @@ public class TestNRTCachingDirectory extends LuceneTestCase {
   public void verifyCompiles() throws Exception {
     Analyzer analyzer = null;
 
-    Directory fsDir = FSDirectory.open(new File("/path/to/index"));
+    Directory fsDir = FSDirectory.open(createTempDir("verify"));
     NRTCachingDirectory cachedFSDir = new NRTCachingDirectory(fsDir, 2.0, 25.0);
-    IndexWriterConfig conf = new IndexWriterConfig(TEST_VERSION_CURRENT, analyzer);
+    IndexWriterConfig conf = new IndexWriterConfig(analyzer);
     IndexWriter writer = new IndexWriter(cachedFSDir, conf);
+    writer.close();
+    cachedFSDir.close();
   }
 
-  public void testDeleteFile() throws Exception {
-    Directory dir = new NRTCachingDirectory(newDirectory(), 2.0, 25.0);
-    dir.createOutput("foo.txt", IOContext.DEFAULT).close();
-    dir.deleteFile("foo.txt");
-    assertEquals(0, dir.listAll().length);
-    dir.close();
-  }
-  
-  // LUCENE-3382 -- make sure we get exception if the directory really does not exist.
-  public void testNoDir() throws Throwable {
-    File tempDir = TestUtil.getTempDir("doesnotexist");
-    TestUtil.rmDir(tempDir);
-    Directory dir = new NRTCachingDirectory(newFSDirectory(tempDir), 2.0, 25.0);
-    try {
-      DirectoryReader.open(dir);
-      fail("did not hit expected exception");
-    } catch (NoSuchDirectoryException nsde) {
-      // expected
-    }
-    dir.close();
-  }
-  
-  // LUCENE-3382 test that we can add a file, and then when we call list() we get it back
-  public void testDirectoryFilter() throws IOException {
-    Directory dir = new NRTCachingDirectory(newFSDirectory(TestUtil.getTempDir("foo")), 2.0, 25.0);
-    String name = "file";
-    try {
-      dir.createOutput(name, newIOContext(random())).close();
-      assertTrue(dir.fileExists(name));
-      assertTrue(Arrays.asList(dir.listAll()).contains(name));
-    } finally {
-      dir.close();
-    }
-  }
-  
-  // LUCENE-3382 test that delegate compound files correctly.
-  public void testCompoundFileAppendTwice() throws IOException {
-    Directory newDir = new NRTCachingDirectory(newDirectory(), 2.0, 25.0);
-    CompoundFileDirectory csw = new CompoundFileDirectory(newDir, "d.cfs", newIOContext(random()), true);
-    createSequenceFile(newDir, "d1", (byte) 0, 15);
-    IndexOutput out = csw.createOutput("d.xyz", newIOContext(random()));
-    out.writeInt(0);
-    try {
-      newDir.copy(csw, "d1", "d1", newIOContext(random()));
-      fail("file does already exist");
-    } catch (IllegalArgumentException e) {
-      //
+  // LUCENE-5724
+  public void testLargeCFS() throws IOException {
+    Directory dir = new NRTCachingDirectory(newFSDirectory(createTempDir()), 2.0, 25.0);
+    IOContext context = new IOContext(new FlushInfo(0, 512*1024*1024));
+    IndexOutput out = dir.createOutput("big.bin", context);
+    byte[] bytes = new byte[512];
+    for(int i=0;i<1024*1024;i++) {
+      out.writeBytes(bytes, 0, bytes.length);
     }
     out.close();
-    assertEquals(1, csw.listAll().length);
-    assertEquals("d.xyz", csw.listAll()[0]);
-   
-    csw.close();
 
-    CompoundFileDirectory cfr = new CompoundFileDirectory(newDir, "d.cfs", newIOContext(random()), false);
-    assertEquals(1, cfr.listAll().length);
-    assertEquals("d.xyz", cfr.listAll()[0]);
-    cfr.close();
-    newDir.close();
-  }
-  
-  /** Creates a file of the specified size with sequential data. The first
-   *  byte is written as the start byte provided. All subsequent bytes are
-   *  computed as start + offset where offset is the number of the byte.
-   */
-  private void createSequenceFile(Directory dir, String name, byte start, int size) throws IOException {
-      IndexOutput os = dir.createOutput(name, newIOContext(random()));
-      for (int i=0; i < size; i++) {
-          os.writeByte(start);
-          start ++;
-      }
-      os.close();
+    Directory cfsDir = new CompoundFileDirectory(dir, "big.cfs", context, true);
+    dir.copy(cfsDir, "big.bin", "big.bin", context);
+    cfsDir.close();
+    dir.close();
   }
 }

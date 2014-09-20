@@ -28,7 +28,6 @@ import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.PrintStreamInfoStream;
 import org.apache.lucene.util.SetOnce;
 import org.apache.lucene.util.SetOnce.AlreadySetException;
-import org.apache.lucene.util.Version;
 
 /**
  * Holds all the configuration that is used to create an {@link IndexWriter}.
@@ -49,7 +48,7 @@ import org.apache.lucene.util.Version;
  * 
  * @since 3.1
  */
-public final class IndexWriterConfig extends LiveIndexWriterConfig implements Cloneable {
+public final class IndexWriterConfig extends LiveIndexWriterConfig {
 
   /**
    * Specifies the open mode for {@link IndexWriter}.
@@ -110,6 +109,15 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig implements Cl
    *  (set to <code>true</code>). For batch indexing with very large 
    *  ram buffers use <code>false</code> */
   public final static boolean DEFAULT_USE_COMPOUND_FILE_SYSTEM = true;
+  
+  /** Default value for calling {@link AtomicReader#checkIntegrity()} before
+   *  merging segments (set to <code>false</code>). You can set this
+   *  to <code>true</code> for additional safety. */
+  public final static boolean DEFAULT_CHECK_INTEGRITY_AT_MERGE = false;
+
+  /** Default value for whether calls to {@link IndexWriter#close()} include a commit. */
+  public final static boolean DEFAULT_COMMIT_ON_CLOSE = true;
+  
   /**
    * Sets the default (for any instance) maximum time to wait for a write lock
    * (in milliseconds).
@@ -144,8 +152,7 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig implements Cl
   }
   
   /**
-   * Creates a new config that with defaults that match the specified
-   * {@link Version} as well as the default {@link
+   * Creates a new config that with the default {@link
    * Analyzer}. By default, {@link TieredMergePolicy} is used
    * for merging;
    * Note that {@link TieredMergePolicy} is free to select
@@ -154,35 +161,10 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig implements Cl
    * should switch to {@link LogByteSizeMergePolicy} or
    * {@link LogDocMergePolicy}.
    */
-  public IndexWriterConfig(Version matchVersion, Analyzer analyzer) {
-    super(analyzer, matchVersion);
+  public IndexWriterConfig(Analyzer analyzer) {
+    super(analyzer);
   }
 
-  @Override
-  public IndexWriterConfig clone() {
-    try {
-      IndexWriterConfig clone = (IndexWriterConfig) super.clone();
-      
-      clone.writer = writer.clone();
-      
-      // Mostly shallow clone, but do a deepish clone of
-      // certain objects that have state that cannot be shared
-      // across IW instances:
-      clone.delPolicy = delPolicy.clone();
-      clone.flushPolicy = flushPolicy.clone();
-      clone.indexerThreadPool = indexerThreadPool.clone();
-      // we clone the infoStream because some impls might have state variables
-      // such as line numbers, message throughput, ...
-      clone.infoStream = infoStream.clone();
-      clone.mergePolicy = mergePolicy.clone();
-      clone.mergeScheduler = mergeScheduler.clone();
-      
-      return clone;
-    } catch (CloneNotSupportedException e) {
-      throw new RuntimeException(e);
-    }
-  }
-  
   /** Specifies {@link OpenMode} of the index.
    * 
    * <p>Only takes effect when IndexWriter is first created. */
@@ -299,21 +281,6 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig implements Cl
   }
 
   /**
-   * Expert: {@link MergePolicy} is invoked whenever there are changes to the
-   * segments in the index. Its role is to select which merges to do, if any,
-   * and return a {@link MergePolicy.MergeSpecification} describing the merges.
-   * It also selects merges to do for forceMerge.
-   *
-   * <p>Only takes effect when IndexWriter is first created. */
-  public IndexWriterConfig setMergePolicy(MergePolicy mergePolicy) {
-    if (mergePolicy == null) {
-      throw new IllegalArgumentException("mergePolicy must not be null");
-    }
-    this.mergePolicy = mergePolicy;
-    return this;
-  }
-
-  /**
    * Set the {@link Codec}.
    * 
    * <p>
@@ -339,11 +306,7 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig implements Cl
   }
 
   /** Expert: Sets the {@link DocumentsWriterPerThreadPool} instance used by the
-   * IndexWriter to assign thread-states to incoming indexing threads. If no
-   * {@link DocumentsWriterPerThreadPool} is set {@link IndexWriter} will use
-   * {@link ThreadAffinityDocumentsWriterThreadPool} with max number of
-   * thread-states set to {@link #DEFAULT_MAX_THREAD_STATES} (see
-   * {@link #DEFAULT_MAX_THREAD_STATES}).
+   * IndexWriter to assign thread-states to incoming indexing threads.
    * </p>
    * <p>
    * NOTE: The given {@link DocumentsWriterPerThreadPool} instance must not be used with
@@ -373,17 +336,13 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig implements Cl
    *
    * <p>Only takes effect when IndexWriter is first created. */
   public IndexWriterConfig setMaxThreadStates(int maxThreadStates) {
-    this.indexerThreadPool = new ThreadAffinityDocumentsWriterThreadPool(maxThreadStates);
+    this.indexerThreadPool = new DocumentsWriterPerThreadPool(maxThreadStates);
     return this;
   }
 
   @Override
   public int getMaxThreadStates() {
-    try {
-      return ((ThreadAffinityDocumentsWriterThreadPool) indexerThreadPool).getMaxThreadStates();
-    } catch (ClassCastException cce) {
-      throw new IllegalStateException(cce);
-    }
+    return indexerThreadPool.getMaxThreadStates();
   }
 
   /** By default, IndexWriter does not pool the
@@ -528,6 +487,11 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig implements Cl
   }
   
   @Override
+  public IndexWriterConfig setMergePolicy(MergePolicy mergePolicy) {
+    return (IndexWriterConfig) super.setMergePolicy(mergePolicy);
+  }
+  
+  @Override
   public IndexWriterConfig setMaxBufferedDeleteTerms(int maxBufferedDeleteTerms) {
     return (IndexWriterConfig) super.setMaxBufferedDeleteTerms(maxBufferedDeleteTerms);
   }
@@ -550,6 +514,15 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig implements Cl
   @Override
   public IndexWriterConfig setUseCompoundFile(boolean useCompoundFile) {
     return (IndexWriterConfig) super.setUseCompoundFile(useCompoundFile);
+  }
+
+  /**
+   * Sets if calls {@link IndexWriter#close()} should first commit
+   * before closing.  Use <code>true</code> to match behavior of Lucene 4.x.
+   */
+  public IndexWriterConfig setCommitOnClose(boolean commitOnClose) {
+    this.commitOnClose = commitOnClose;
+    return this;
   }
 
   @Override

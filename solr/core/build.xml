@@ -32,13 +32,18 @@
 
   <target name="compile-core" depends="compile-solrj,common-solr.compile-core"/>
 
+  <target name="compile-test" depends="jar-analyzers-icu,-compile-analysis-extras,common-solr.compile-test"/>
+
   <path id="test.classpath">
     <path refid="solr.test.base.classpath"/>
     <fileset dir="${test.lib.dir}" includes="*.jar"/>
+    <pathelement location="${analyzers-icu.jar}"/>
+    <pathelement location="${common-solr.dir}/build/contrib/solr-analysis-extras/classes/java"/>
+    <fileset dir="${common-solr.dir}/contrib/analysis-extras/lib" includes="icu4j*.jar"/>
   </path>
 
   <!-- specialized to ONLY depend on solrj -->
-  <target name="javadocs" depends="compile-core,define-lucene-javadoc-url,lucene-javadocs,javadocs-solrj">
+  <target name="javadocs" depends="compile-core,define-lucene-javadoc-url,lucene-javadocs,javadocs-solrj,check-javadocs-uptodate" unless="javadocs-uptodate-${name}">
     <sequential>
       <mkdir dir="${javadoc.dir}/${name}"/>
       <solr-invoke-javadoc>

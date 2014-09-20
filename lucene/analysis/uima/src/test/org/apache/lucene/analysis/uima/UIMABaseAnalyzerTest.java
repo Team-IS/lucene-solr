@@ -68,7 +68,7 @@ public class UIMABaseAnalyzerTest extends BaseTokenStreamTestCase {
   @Test
   public void baseUIMAAnalyzerIntegrationTest() throws Exception {
     Directory dir = new RAMDirectory();
-    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, analyzer));
+    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(analyzer));
     // add the first doc
     Document doc = new Document();
     String dummyTitle = "this is a dummy title ";
@@ -111,7 +111,6 @@ public class UIMABaseAnalyzerTest extends BaseTokenStreamTestCase {
     assertEquals(dogmasContents, d1.getField("contents").stringValue());
 
     // do a matchalldocs query to retrieve both docs
-    indexSearcher = newSearcher(directoryReader);
     result = indexSearcher.search(new MatchAllDocsQuery(), 2);
     assertEquals(2, result.totalHits);
     writer.close();

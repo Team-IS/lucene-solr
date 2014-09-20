@@ -21,10 +21,9 @@ import java.io.IOException;
 
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.SortedSetDocValues;
-import org.apache.lucene.search.Collector;
-import org.apache.lucene.search.FieldCache;
-import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefHash;
 
@@ -33,7 +32,7 @@ import org.apache.lucene.util.BytesRefHash;
  *
  * @lucene.experimental
  */
-abstract class TermsCollector extends Collector {
+abstract class TermsCollector extends SimpleCollector {
 
   final String field;
   final BytesRefHash collectorTerms = new BytesRefHash();
@@ -44,10 +43,6 @@ abstract class TermsCollector extends Collector {
 
   public BytesRefHash getCollectorTerms() {
     return collectorTerms;
-  }
-
-  @Override
-  public void setScorer(Scorer scorer) throws IOException {
   }
 
   @Override
@@ -80,14 +75,14 @@ abstract class TermsCollector extends Collector {
       docTermOrds.setDocument(doc);
       long ord;
       while ((ord = docTermOrds.nextOrd()) != SortedSetDocValues.NO_MORE_ORDS) {
-        docTermOrds.lookupOrd(ord, scratch);
-        collectorTerms.add(scratch);
+        final BytesRef term = docTermOrds.lookupOrd(ord);
+        collectorTerms.add(term);
       }
     }
 
     @Override
-    public void setNextReader(AtomicReaderContext context) throws IOException {
-      docTermOrds = FieldCache.DEFAULT.getDocTermOrds(context.reader(), field);
+    protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+      docTermOrds = DocValues.getSortedSet(context.reader(), field);
     }
   }
 
@@ -103,13 +98,13 @@ abstract class TermsCollector extends Collector {
 
     @Override
     public void collect(int doc) throws IOException {
-      fromDocTerms.get(doc, spare);
-      collectorTerms.add(spare);
+      final BytesRef term = fromDocTerms.get(doc);
+      collectorTerms.add(term);
     }
 
     @Override
-    public void setNextReader(AtomicReaderContext context) throws IOException {
-      fromDocTerms = FieldCache.DEFAULT.getTerms(context.reader(), field, false);
+    protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+      fromDocTerms = DocValues.getBinary(context.reader(), field);
     }
   }
 

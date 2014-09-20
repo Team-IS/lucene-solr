@@ -22,8 +22,11 @@ import org.apache.lucene.index.StorableField;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.queries.function.valuesource.EnumFieldSource;
 import org.apache.lucene.search.*;
+import org.apache.lucene.uninverting.UninvertingReader.Type;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.NumericUtils;
 import org.apache.solr.common.EnumFieldValue;
 import org.apache.solr.common.SolrException;
@@ -42,9 +45,9 @@ import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
-
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -178,9 +181,18 @@ public class EnumField extends PrimitiveFieldType {
   public SortField getSortField(SchemaField field, boolean top) {
     field.checkSortability();
     final Object missingValue = Integer.MIN_VALUE;
-    SortField sf = new SortField(field.getName(), FieldCache.NUMERIC_UTILS_INT_PARSER, top);
+    SortField sf = new SortField(field.getName(), SortField.Type.INT, top);
     sf.setMissingValue(missingValue);
     return sf;
+  }
+  
+  @Override
+  public Type getUninversionType(SchemaField sf) {
+    if (sf.multiValued()) {
+      return Type.SORTED_SET_INTEGER;
+    } else {
+      return Type.INTEGER;
+    }
   }
 
   /**
@@ -189,7 +201,7 @@ public class EnumField extends PrimitiveFieldType {
   @Override
   public ValueSource getValueSource(SchemaField field, QParser qparser) {
     field.checkFieldCacheSource(qparser);
-    return new EnumFieldSource(field.getName(), FieldCache.NUMERIC_UTILS_INT_PARSER, enumIntToStringMap, enumStringToIntMap);
+    return new EnumFieldSource(field.getName(), enumIntToStringMap, enumStringToIntMap);
   }
 
   /**
@@ -230,7 +242,7 @@ public class EnumField extends PrimitiveFieldType {
     Query query = null;
     final boolean matchOnly = field.hasDocValues() && !field.indexed();
     if (matchOnly) {
-      query = new ConstantScoreQuery(FieldCacheRangeFilter.newIntRange(field.getName(),
+      query = new ConstantScoreQuery(DocValuesRangeFilter.newIntRange(field.getName(),
               min == null ? null : minValue,
               max == null ? null : maxValue,
               minInclusive, maxInclusive));
@@ -262,16 +274,16 @@ public class EnumField extends PrimitiveFieldType {
     if (val == null)
       return null;
 
-    final BytesRef bytes = new BytesRef(NumericUtils.BUF_SIZE_LONG);
+    final BytesRefBuilder bytes = new BytesRefBuilder();
     readableToIndexed(val, bytes);
-    return bytes.utf8ToString();
+    return bytes.get().utf8ToString();
   }
 
   /**
    * {@inheritDoc}
    */
   @Override
-  public void readableToIndexed(CharSequence val, BytesRef result) {
+  public void readableToIndexed(CharSequence val, BytesRefBuilder result) {
     final String s = val.toString();
     if (s == null)
       return;
@@ -316,13 +328,13 @@ public class EnumField extends PrimitiveFieldType {
    * {@inheritDoc}
    */
   @Override
-  public CharsRef indexedToReadable(BytesRef input, CharsRef output) {
+  public CharsRef indexedToReadable(BytesRef input, CharsRefBuilder output) {
     final Integer intValue = NumericUtils.prefixCodedToInt(input);
     final String stringValue = intValueToStringValue(intValue);
     output.grow(stringValue.length());
-    output.length = stringValue.length();
-    stringValue.getChars(0, output.length, output.chars, 0);
-    return output;
+    output.setLength(stringValue.length());
+    stringValue.getChars(0, output.length(), output.chars(), 0);
+    return output.get();
   }
 
   /**
@@ -343,9 +355,9 @@ public class EnumField extends PrimitiveFieldType {
     final Number val = f.numericValue();
     if (val == null)
       return null;
-    final BytesRef bytes = new BytesRef(NumericUtils.BUF_SIZE_LONG);
+    final BytesRefBuilder bytes = new BytesRefBuilder();
     NumericUtils.intToPrefixCoded(val.intValue(), 0, bytes);
-    return bytes.utf8ToString();
+    return bytes.get().utf8ToString();
   }
 
   /**

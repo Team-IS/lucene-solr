@@ -21,13 +21,14 @@ import java.io.IOException;
 import java.util.Arrays;
 
 import org.apache.lucene.codecs.CodecUtil;
+import org.apache.lucene.index.IndexFormatTooOldException;
+import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.CompoundFileDirectory;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.BitUtil;
-import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.MutableBits;
 
 /** Optimized implementation of a vector of bits.  This is more-or-less like
@@ -198,9 +199,12 @@ final class BitVector implements Cloneable, MutableBits {
   // Changed DGaps to encode gaps between cleared bits, not
   // set:
   public final static int VERSION_DGAPS_CLEARED = 1;
+  
+  // added checksum
+  public final static int VERSION_CHECKSUM = 2;
 
   // Increment version to change it:
-  public final static int VERSION_CURRENT = VERSION_DGAPS_CLEARED;
+  public final static int VERSION_CURRENT = VERSION_CHECKSUM;
 
   public int getVersion() {
     return version;
@@ -211,8 +215,7 @@ final class BitVector implements Cloneable, MutableBits {
     #BitVector(Directory, String, IOContext)}.  */
   public final void write(Directory d, String name, IOContext context) throws IOException {
     assert !(d instanceof CompoundFileDirectory);
-    IndexOutput output = d.createOutput(name, context);
-    try {
+    try (IndexOutput output = d.createOutput(name, context)) {
       output.writeInt(-2);
       CodecUtil.writeHeader(output, CODEC, VERSION_CURRENT);
       if (isSparse()) { 
@@ -221,9 +224,8 @@ final class BitVector implements Cloneable, MutableBits {
       } else {
         writeBits(output);
       }
+      CodecUtil.writeFooter(output);
       assert verifyCount();
-    } finally {
-      IOUtils.close(output);
     }
   }
 
@@ -324,9 +326,7 @@ final class BitVector implements Cloneable, MutableBits {
     <code>d</code>, as written by the {@link #write} method.
     */
   public BitVector(Directory d, String name, IOContext context) throws IOException {
-    IndexInput input = d.openInput(name, context);
-
-    try {
+    try (ChecksumIndexInput input = d.openChecksumInput(name, context)) {
       final int firstInt = input.readInt();
 
       if (firstInt == -2) {
@@ -334,8 +334,8 @@ final class BitVector implements Cloneable, MutableBits {
         version = CodecUtil.checkHeader(input, CODEC, VERSION_START, VERSION_CURRENT);
         size = input.readInt();
       } else {
-        version = VERSION_PRE;
-        size = firstInt;
+        // we started writing full header well before 4.0
+        throw new IndexFormatTooOldException(input.toString(), Integer.toString(firstInt));
       }
       if (size == -1) {
         if (version >= VERSION_DGAPS_CLEARED) {
@@ -351,9 +351,12 @@ final class BitVector implements Cloneable, MutableBits {
         invertAll();
       }
 
+      if (version >= VERSION_CHECKSUM) {
+        CodecUtil.checkFooter(input);
+      } else {
+        CodecUtil.checkEOF(input);
+      }
       assert verifyCount();
-    } finally {
-      input.close();
     }
   }
 

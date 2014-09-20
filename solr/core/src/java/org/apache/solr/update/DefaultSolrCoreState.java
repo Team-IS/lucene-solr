@@ -72,7 +72,7 @@ public final class DefaultSolrCoreState extends SolrCoreState implements Recover
       }
       indexWriter = null;
     } catch (Exception e) {
-      log.error("Error during shutdown of writer.", e);
+      log.error("Error during close of writer.", e);
     } 
   }
   
@@ -283,14 +283,14 @@ public final class DefaultSolrCoreState extends SolrCoreState implements Recover
     
     // check before we grab the lock
     if (cc.isShutDown()) {
-      log.warn("Skipping recovery because Solr is shutdown");
+      log.warn("Skipping recovery because Solr is close");
       return;
     }
     
     synchronized (recoveryLock) {
       // to be air tight we must also check after lock
       if (cc.isShutDown()) {
-        log.warn("Skipping recovery because Solr is shutdown");
+        log.warn("Skipping recovery because Solr is close");
         return;
       }
       log.info("Running recovery - first canceling any ongoing recovery");
@@ -304,7 +304,7 @@ public final class DefaultSolrCoreState extends SolrCoreState implements Recover
         }
         // check again for those that were waiting
         if (cc.isShutDown()) {
-          log.warn("Skipping recovery because Solr is shutdown");
+          log.warn("Skipping recovery because Solr is close");
           return;
         }
         if (closed) return;

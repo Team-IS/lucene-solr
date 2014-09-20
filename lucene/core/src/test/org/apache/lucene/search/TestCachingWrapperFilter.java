@@ -35,7 +35,7 @@ import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.WAH8DocIdSet;
 
 public class TestCachingWrapperFilter extends LuceneTestCase {
   Directory dir;
@@ -66,7 +66,8 @@ public class TestCachingWrapperFilter extends LuceneTestCase {
   
   @Override
   public void tearDown() throws Exception {
-    IOUtils.close(iw, ir, dir);
+    iw.close();
+    IOUtils.close(ir, dir);
     super.tearDown();
   }
   
@@ -205,6 +206,11 @@ public class TestCachingWrapperFilter extends LuceneTestCase {
           public DocIdSetIterator iterator() {
             return null;
           }
+
+          @Override
+          public long ramBytesUsed() {
+            return 0L;
+          }
         };
       }
     };
@@ -235,7 +241,7 @@ public class TestCachingWrapperFilter extends LuceneTestCase {
       if (originalSet.isCacheable()) {
         assertEquals("Cached DocIdSet must be of same class like uncached, if cacheable", originalSet.getClass(), cachedSet.getClass());
       } else {
-        assertTrue("Cached DocIdSet must be an FixedBitSet if the original one was not cacheable", cachedSet instanceof FixedBitSet || cachedSet == null);
+        assertTrue("Cached DocIdSet must be an WAH8DocIdSet if the original one was not cacheable", cachedSet instanceof WAH8DocIdSet || cachedSet == null);
       }
     }
   }
@@ -253,7 +259,7 @@ public class TestCachingWrapperFilter extends LuceneTestCase {
     // returns default empty docidset, always cacheable:
     assertDocIdSetCacheable(reader, NumericRangeFilter.newIntRange("test", Integer.valueOf(10000), Integer.valueOf(-10000), true, true), true);
     // is cacheable:
-    assertDocIdSetCacheable(reader, FieldCacheRangeFilter.newIntRange("test", Integer.valueOf(10), Integer.valueOf(20), true, true), true);
+    assertDocIdSetCacheable(reader, DocValuesRangeFilter.newIntRange("test", Integer.valueOf(10), Integer.valueOf(20), true, true), false);
     // a fixedbitset filter is always cacheable
     assertDocIdSetCacheable(reader, new Filter() {
       @Override
@@ -271,7 +277,7 @@ public class TestCachingWrapperFilter extends LuceneTestCase {
     RandomIndexWriter writer = new RandomIndexWriter(
         random(),
         dir,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).
+        newIndexWriterConfig(new MockAnalyzer(random())).
             setMergeScheduler(new SerialMergeScheduler()).
             // asserts below requires no unexpected merges:
             setMergePolicy(newLogMergePolicy(10))
@@ -301,7 +307,7 @@ public class TestCachingWrapperFilter extends LuceneTestCase {
     CachingWrapperFilter filter = new CachingWrapperFilter(startFilter);
 
     docs = searcher.search(new MatchAllDocsQuery(), filter, 1);
-    assertTrue(filter.sizeInBytes() > 0);
+    assertTrue(filter.ramBytesUsed() > 0);
 
     assertEquals("[query + filter] Should find a hit...", 1, docs.totalHits);
 

@@ -35,7 +35,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import junit.framework.Assert;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.lucene.search.FieldCache;
 import org.apache.lucene.util.Constants;
 import org.apache.lucene.util.TestUtil;
 import org.apache.solr.client.solrj.SolrResponse;
@@ -53,7 +52,6 @@ import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.schema.TrieDateField;
-import org.apache.solr.util.AbstractSolrTestCase;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -278,23 +276,22 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
     super.setUp();
     System.setProperty("solr.test.sys.prop1", "propone");
     System.setProperty("solr.test.sys.prop2", "proptwo");
-    testDir = new File(TEMP_DIR,
-            getClass().getName() + "-" + System.currentTimeMillis());
-    testDir.mkdirs();
+    testDir = createTempDir().toFile();
   }
 
   @Override
   public void tearDown() throws Exception {
     destroyServers();
-    if (!AbstractSolrTestCase.recurseDelete(testDir)) {
-      System.err.println("!!!! WARNING: best effort to remove " + testDir.getAbsolutePath() + " FAILED !!!!!");
-    }
-    FieldCache.DEFAULT.purgeAllCaches();   // avoid FC insanity
     super.tearDown();
   }
 
+  protected JettySolrRunner createControlJetty() throws Exception {
+    JettySolrRunner jetty = createJetty(new File(getSolrHome()), testDir + "/control/data", null, getSolrConfigFile(), getSchemaFile());
+    return jetty;
+  }
+  
   protected void createServers(int numShards) throws Exception {
-    controlJetty = createJetty(new File(getSolrHome()), testDir + "/control/data", null, getSolrConfigFile(), getSchemaFile());
+    controlJetty = createControlJetty();
 
     controlClient = createNewSolrServer(controlJetty.getLocalPort());
 
@@ -837,6 +834,8 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
   }
 
   protected void compareSolrResponses(SolrResponse a, SolrResponse b) {
+    // SOLR-3345: Checking QTime value can be skipped as there is no guarantee that the numbers will match.
+    handle.put("QTime", SKIPVAL);
     String cmp = compare(a.getResponse(), b.getResponse(), flags, handle);
     if (cmp != null) {
       log.error("Mismatched responses:\n" + a + "\n" + b);

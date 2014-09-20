@@ -31,10 +31,10 @@ import org.apache.lucene.index.IndexCommit;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.IndexNotFoundException;
 import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.replicator.ReplicationClient.ReplicationHandler;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
+import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.InfoStream;
 
 /**
@@ -109,7 +109,7 @@ public class IndexReplicationHandler implements ReplicationHandler {
     }
     
     String segmentsFile = files.remove(files.size() - 1);
-    if (!segmentsFile.startsWith(IndexFileNames.SEGMENTS) || segmentsFile.equals(IndexFileNames.SEGMENTS_GEN)) {
+    if (!segmentsFile.startsWith(IndexFileNames.SEGMENTS) || segmentsFile.equals(IndexFileNames.OLD_SEGMENTS_GEN)) {
       throw new IllegalStateException("last file to copy+sync must be segments_N but got " + segmentsFile
           + "; check your Revision implementation!");
     }
@@ -122,14 +122,9 @@ public class IndexReplicationHandler implements ReplicationHandler {
    */
   public static void cleanupFilesOnFailure(Directory dir, List<String> files) {
     for (String file : files) {
-      try {
-        if (dir.fileExists(file)) {
-          dir.deleteFile(file);
-        }
-      } catch (Throwable t) {
-        // suppress any exception because if we're here, it means copy
-        // failed, and we must cleanup after ourselves.
-      }
+      // suppress any exception because if we're here, it means copy
+      // failed, and we must cleanup after ourselves.
+      IOUtils.deleteFilesIgnoringExceptions(dir, file);
     }
   }
   
@@ -143,7 +138,7 @@ public class IndexReplicationHandler implements ReplicationHandler {
    * directory. It suppresses any exceptions that occur, as this can be retried
    * the next time.
    */
-  public static void cleanupOldIndexFiles(Directory dir, String segmentsFile) {
+  public static void cleanupOldIndexFiles(Directory dir, String segmentsFile, InfoStream infoStream) {
     try {
       IndexCommit commit = getLastCommit(dir);
       // commit == null means weird IO errors occurred, ignore them
@@ -152,23 +147,22 @@ public class IndexReplicationHandler implements ReplicationHandler {
       if (commit != null && commit.getSegmentsFileName().equals(segmentsFile)) {
         Set<String> commitFiles = new HashSet<>();
         commitFiles.addAll(commit.getFileNames());
-        commitFiles.add(IndexFileNames.SEGMENTS_GEN);
         Matcher matcher = IndexFileNames.CODEC_FILE_PATTERN.matcher("");
         for (String file : dir.listAll()) {
           if (!commitFiles.contains(file)
               && (matcher.reset(file).matches() || file.startsWith(IndexFileNames.SEGMENTS))) {
-            try {
-              dir.deleteFile(file);
-            } catch (Throwable t) {
-              // suppress, it's just a best effort
-            }
+            // suppress exceptions, it's just a best effort
+            IOUtils.deleteFilesIgnoringExceptions(dir, file);
           }
         }
       }
     } catch (Throwable t) {
-      // ignore any errors that happens during this state and only log it. this
+      // ignore any errors that happen during this state and only log it. this
       // cleanup will have a chance to succeed the next time we get a new
       // revision.
+      if (infoStream.isEnabled(INFO_STREAM_COMPONENT)) {
+        infoStream.message(INFO_STREAM_COMPONENT, "cleanupOldIndexFiles(): failed on error " + t.getMessage());
+      }
     }
   }
   
@@ -180,25 +174,6 @@ public class IndexReplicationHandler implements ReplicationHandler {
     if (!source.equals(target)) {
       for (String file : files) {
         source.copy(target, file, file, IOContext.READONCE);
-      }
-    }
-  }
-
-  /**
-   * Writes {@link IndexFileNames#SEGMENTS_GEN} file to the directory, reading
-   * the generation from the given {@code segmentsFile}. If it is {@code null},
-   * this method deletes segments.gen from the directory.
-   */
-  public static void writeSegmentsGen(String segmentsFile, Directory dir) {
-    if (segmentsFile != null) {
-      SegmentInfos.writeSegmentsGen(dir, SegmentInfos.generationFromSegmentsFileName(segmentsFile));
-    } else {
-      try {
-        if (dir.fileExists(IndexFileNames.SEGMENTS_GEN)) {
-          dir.deleteFile(IndexFileNames.SEGMENTS_GEN);
-        }
-      } catch (Throwable t) {
-        // suppress any errors while deleting this file.
       }
     }
   }
@@ -246,6 +221,7 @@ public class IndexReplicationHandler implements ReplicationHandler {
     Directory clientDir = sourceDirectory.values().iterator().next();
     List<String> files = copiedFiles.values().iterator().next();
     String segmentsFile = getSegmentsFile(files, false);
+    String pendingSegmentsFile = "pending_" + segmentsFile;
     
     boolean success = false;
     try {
@@ -255,14 +231,16 @@ public class IndexReplicationHandler implements ReplicationHandler {
       // fsync all copied files (except segmentsFile)
       indexDir.sync(files);
       
-      // now copy and fsync segmentsFile
-      clientDir.copy(indexDir, segmentsFile, segmentsFile, IOContext.READONCE);
-      indexDir.sync(Collections.singletonList(segmentsFile));
+      // now copy and fsync segmentsFile as pending, then rename (simulating lucene commit)
+      clientDir.copy(indexDir, segmentsFile, pendingSegmentsFile, IOContext.READONCE);
+      indexDir.sync(Collections.singletonList(pendingSegmentsFile));
+      indexDir.renameFile(pendingSegmentsFile, segmentsFile);
       
       success = true;
     } finally {
       if (!success) {
         files.add(segmentsFile); // add it back so it gets deleted too
+        files.add(pendingSegmentsFile);
         cleanupFilesOnFailure(indexDir, files);
       }
     }
@@ -275,16 +253,13 @@ public class IndexReplicationHandler implements ReplicationHandler {
       infoStream.message(INFO_STREAM_COMPONENT, "revisionReady(): currentVersion=" + currentVersion
           + " currentRevisionFiles=" + currentRevisionFiles);
     }
-
-    // update the segments.gen file
-    writeSegmentsGen(segmentsFile, indexDir);
     
     // Cleanup the index directory from old and unused index files.
     // NOTE: we don't use IndexWriter.deleteUnusedFiles here since it may have
     // side-effects, e.g. if it hits sudden IO errors while opening the index
     // (and can end up deleting the entire index). It is not our job to protect
     // against those errors, app will probably hit them elsewhere.
-    cleanupOldIndexFiles(indexDir, segmentsFile);
+    cleanupOldIndexFiles(indexDir, segmentsFile, infoStream);
 
     // successfully updated the index, notify the callback that the index is
     // ready.

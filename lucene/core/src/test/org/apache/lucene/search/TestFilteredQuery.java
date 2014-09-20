@@ -59,7 +59,7 @@ public class TestFilteredQuery extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     directory = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter (random(), directory, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
+    RandomIndexWriter writer = new RandomIndexWriter (random(), directory, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
 
     Document doc = new Document();
     doc.add (newTextField("field", "one two three four five", Field.Store.YES));
@@ -87,7 +87,7 @@ public class TestFilteredQuery extends LuceneTestCase {
     writer.forceMerge(1);
 
     reader = writer.getReader();
-    writer.close ();
+    writer.close();
 
     searcher = newSearcher(reader);
 
@@ -402,7 +402,7 @@ public class TestFilteredQuery extends LuceneTestCase {
   public void testQueryFirstFilterStrategy() throws IOException {
     Directory directory = newDirectory();
     RandomIndexWriter writer = new RandomIndexWriter(random(), directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+        newIndexWriterConfig(new MockAnalyzer(random())));
     int numDocs = atLeast(50);
     int totalDocsWithZero = 0;
     for (int i = 0; i < numDocs; i++) {
@@ -435,7 +435,12 @@ public class TestFilteredQuery extends LuceneTestCase {
               bitSet.set(d, true);
             }
             return new DocIdSet() {
-              
+
+              @Override
+              public long ramBytesUsed() {
+                return 0L;
+              }
+
               @Override
               public Bits bits() throws IOException {
                 if (nullBitset) {
@@ -471,9 +476,8 @@ public class TestFilteredQuery extends LuceneTestCase {
         }, FilteredQuery.QUERY_FIRST_FILTER_STRATEGY);
     
     TopDocs search = searcher.search(query, 10);
-    assertEquals(totalDocsWithZero, search.totalHits);
-    IOUtils.close(reader, writer, directory);
-    
+    assertEquals(totalDocsWithZero, search.totalHits);  
+    IOUtils.close(reader, directory);
   }
   
   /*
@@ -482,7 +486,7 @@ public class TestFilteredQuery extends LuceneTestCase {
    */
   public void testLeapFrogStrategy() throws IOException {
     Directory directory = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter (random(), directory, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    RandomIndexWriter writer = new RandomIndexWriter (random(), directory, newIndexWriterConfig(new MockAnalyzer(random())));
     int numDocs = atLeast(50);
     int totalDocsWithZero = 0;
     for (int i = 0; i < numDocs; i++) {
@@ -495,7 +499,7 @@ public class TestFilteredQuery extends LuceneTestCase {
       writer.addDocument (doc);  
     }
     IndexReader reader = writer.getReader();
-    writer.close ();
+    writer.close();
     final boolean queryFirst = random().nextBoolean();
     IndexSearcher searcher = newSearcher(reader);
     Query query = new FilteredQuery(new TermQuery(new Term("field", "0")), new Filter() {
@@ -503,7 +507,12 @@ public class TestFilteredQuery extends LuceneTestCase {
       public DocIdSet getDocIdSet(final AtomicReaderContext context, Bits acceptDocs)
           throws IOException {
         return new DocIdSet() {
-          
+
+          @Override
+          public long ramBytesUsed() {
+            return 0L;
+          }
+
           @Override
           public Bits bits() throws IOException {
              return null;
@@ -551,8 +560,7 @@ public class TestFilteredQuery extends LuceneTestCase {
     
     TopDocs search = searcher.search(query, 10);
     assertEquals(totalDocsWithZero, search.totalHits);
-    IOUtils.close(reader, writer, directory);
-     
+    IOUtils.close(reader, directory);
   }
 }
 

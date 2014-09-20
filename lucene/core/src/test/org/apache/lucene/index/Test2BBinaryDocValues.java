@@ -26,25 +26,26 @@ import org.apache.lucene.store.ByteArrayDataOutput;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.LuceneTestCase.Monster;
+import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.TimeUnits;
-import org.junit.Ignore;
 
 import com.carrotsearch.randomizedtesting.annotations.TimeoutSuite;
 
+@SuppressCodecs({"SimpleText", "Memory", "Direct"})
 @TimeoutSuite(millis = 80 * TimeUnits.HOUR)
-@Ignore("takes ~ 45 minutes")
+@Monster("takes ~ 45 minutes")
 public class Test2BBinaryDocValues extends LuceneTestCase {
   
   // indexes Integer.MAX_VALUE docs with a fixed binary field
   public void testFixedBinary() throws Exception {
-    BaseDirectoryWrapper dir = newFSDirectory(TestUtil.getTempDir("2BFixedBinary"));
+    BaseDirectoryWrapper dir = newFSDirectory(createTempDir("2BFixedBinary"));
     if (dir instanceof MockDirectoryWrapper) {
       ((MockDirectoryWrapper)dir).setThrottling(MockDirectoryWrapper.Throttling.NEVER);
     }
     
     IndexWriter w = new IndexWriter(dir,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+        new IndexWriterConfig(new MockAnalyzer(random()))
         .setMaxBufferedDocs(IndexWriterConfig.DISABLE_AUTO_FLUSH)
         .setRAMBufferSizeMB(256.0)
         .setMergeScheduler(new ConcurrentMergeScheduler())
@@ -79,15 +80,14 @@ public class Test2BBinaryDocValues extends LuceneTestCase {
     int expectedValue = 0;
     for (AtomicReaderContext context : r.leaves()) {
       AtomicReader reader = context.reader();
-      BytesRef scratch = new BytesRef();
       BinaryDocValues dv = reader.getBinaryDocValues("dv");
       for (int i = 0; i < reader.maxDoc(); i++) {
         bytes[0] = (byte)(expectedValue >> 24);
         bytes[1] = (byte)(expectedValue >> 16);
         bytes[2] = (byte)(expectedValue >> 8);
         bytes[3] = (byte) expectedValue;
-        dv.get(i, scratch);
-        assertEquals(data, scratch);
+        final BytesRef term = dv.get(i);
+        assertEquals(data, term);
         expectedValue++;
       }
     }
@@ -98,13 +98,13 @@ public class Test2BBinaryDocValues extends LuceneTestCase {
   
   // indexes Integer.MAX_VALUE docs with a variable binary field
   public void testVariableBinary() throws Exception {
-    BaseDirectoryWrapper dir = newFSDirectory(TestUtil.getTempDir("2BVariableBinary"));
+    BaseDirectoryWrapper dir = newFSDirectory(createTempDir("2BVariableBinary"));
     if (dir instanceof MockDirectoryWrapper) {
       ((MockDirectoryWrapper)dir).setThrottling(MockDirectoryWrapper.Throttling.NEVER);
     }
     
     IndexWriter w = new IndexWriter(dir,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+        new IndexWriterConfig(new MockAnalyzer(random()))
         .setMaxBufferedDocs(IndexWriterConfig.DISABLE_AUTO_FLUSH)
         .setRAMBufferSizeMB(256.0)
         .setMergeScheduler(new ConcurrentMergeScheduler())
@@ -140,11 +140,10 @@ public class Test2BBinaryDocValues extends LuceneTestCase {
     ByteArrayDataInput input = new ByteArrayDataInput();
     for (AtomicReaderContext context : r.leaves()) {
       AtomicReader reader = context.reader();
-      BytesRef scratch = new BytesRef(bytes);
       BinaryDocValues dv = reader.getBinaryDocValues("dv");
       for (int i = 0; i < reader.maxDoc(); i++) {
-        dv.get(i, scratch);
-        input.reset(scratch.bytes, scratch.offset, scratch.length);
+        final BytesRef term = dv.get(i);
+        input.reset(term.bytes, term.offset, term.length);
         assertEquals(expectedValue % 65535, input.readVInt());
         assertTrue(input.eof());
         expectedValue++;

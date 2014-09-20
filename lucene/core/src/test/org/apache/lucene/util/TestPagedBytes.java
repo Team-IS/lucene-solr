@@ -37,7 +37,7 @@ public class TestPagedBytes extends LuceneTestCase {
   public void testDataInputOutput() throws Exception {
     Random random = random();
     for(int iter=0;iter<5*RANDOM_MULTIPLIER;iter++) {
-      BaseDirectoryWrapper dir = newFSDirectory(TestUtil.getTempDir("testOverflow"));
+      BaseDirectoryWrapper dir = newFSDirectory(createTempDir("testOverflow"));
       if (dir instanceof MockDirectoryWrapper) {
         ((MockDirectoryWrapper)dir).setThrottling(MockDirectoryWrapper.Throttling.NEVER);
       }
@@ -150,7 +150,7 @@ public class TestPagedBytes extends LuceneTestCase {
 
   @Ignore // memory hole
   public void testOverflow() throws IOException {
-    BaseDirectoryWrapper dir = newFSDirectory(TestUtil.getTempDir("testOverflow"));
+    BaseDirectoryWrapper dir = newFSDirectory(createTempDir("testOverflow"));
     if (dir instanceof MockDirectoryWrapper) {
       ((MockDirectoryWrapper)dir).setThrottling(MockDirectoryWrapper.Throttling.NEVER);
     }
@@ -183,6 +183,20 @@ public class TestPagedBytes extends LuceneTestCase {
     }
     in.close();
     dir.close();
+  }
+
+  public void testRamBytesUsed() {
+    final int blockBits = TestUtil.nextInt(random(), 4, 22);
+    PagedBytes b = new PagedBytes(blockBits);
+    final int totalBytes = random().nextInt(10000);
+    for (long pointer = 0; pointer < totalBytes; ) {
+      BytesRef bytes = new BytesRef(TestUtil.randomSimpleString(random(), 10));
+      pointer = b.copyUsingLengthPrefix(bytes);
+    }
+    assertEquals(RamUsageTester.sizeOf(b), b.ramBytesUsed());
+    final PagedBytes.Reader reader = b.freeze(random().nextBoolean());
+    assertEquals(RamUsageTester.sizeOf(b), b.ramBytesUsed());
+    assertEquals(RamUsageTester.sizeOf(reader), reader.ramBytesUsed());
   }
 
 }

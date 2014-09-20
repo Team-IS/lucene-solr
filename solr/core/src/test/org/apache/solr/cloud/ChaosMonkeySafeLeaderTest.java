@@ -19,10 +19,11 @@ package org.apache.solr.cloud;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
-import org.apache.lucene.util.LuceneTestCase.BadApple;
 import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.apache.solr.client.solrj.SolrQuery;
+import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.CloudSolrServer;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.core.Diagnostics;
@@ -33,7 +34,6 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 
 @Slow
-@BadApple(bugUrl = "https://issues.apache.org/jira/browse/SOLR-5735")
 public class ChaosMonkeySafeLeaderTest extends AbstractFullDistribZkTestBase {
   
   private static final Integer RUN_LENGTH = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.runlength", "-1"));
@@ -58,14 +58,14 @@ public class ChaosMonkeySafeLeaderTest extends AbstractFullDistribZkTestBase {
     SolrCmdDistributor.testing_errorHook = null;
   }
   
-  public static String[] fieldNames = new String[]{"f_i", "f_f", "f_d", "f_l", "f_dt"};
-  public static RandVal[] randVals = new RandVal[]{rint, rfloat, rdouble, rlong, rdate};
+  protected static final String[] fieldNames = new String[]{"f_i", "f_f", "f_d", "f_l", "f_dt"};
+  protected static final RandVal[] randVals = new RandVal[]{rint, rfloat, rdouble, rlong, rdate};
   
-  protected String[] getFieldNames() {
+  public String[] getFieldNames() {
     return fieldNames;
   }
 
-  protected RandVal[] getRandValues() {
+  public RandVal[] getRandValues() {
     return randVals;
   }
   
@@ -89,21 +89,27 @@ public class ChaosMonkeySafeLeaderTest extends AbstractFullDistribZkTestBase {
   
   public ChaosMonkeySafeLeaderTest() {
     super();
-    sliceCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.slicecount", "3"));
-    shardCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.shardcount", "12"));
+    sliceCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.slicecount", "-1"));
+    shardCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.shardcount", "-1"));
+    
+    if (sliceCount == -1) {
+      sliceCount = random().nextInt(TEST_NIGHTLY ? 5 : 3) + 1;
+    }
+    if (shardCount == -1) {
+      shardCount = sliceCount + random().nextInt(TEST_NIGHTLY ? 12 : 2);
+    }
   }
   
   @Override
   public void doTest() throws Exception {
     
     handle.clear();
-    handle.put("QTime", SKIPVAL);
     handle.put("timestamp", SKIPVAL);
     
     // randomly turn on 1 seconds 'soft' commit
     randomlyEnableAutoSoftCommit();
 
-    del("*:*");
+    tryDelete();
     
     List<StopableIndexingThread> threads = new ArrayList<>();
     int threadCount = 2;
@@ -119,8 +125,13 @@ public class ChaosMonkeySafeLeaderTest extends AbstractFullDistribZkTestBase {
       if (RUN_LENGTH != -1) {
         runLength = RUN_LENGTH;
       } else {
-        int[] runTimes = new int[] {5000, 6000, 10000, 25000, 27000, 30000,
-            30000, 45000, 90000, 120000};
+        int[] runTimes;
+        if (TEST_NIGHTLY) {
+          runTimes = new int[] {5000, 6000, 10000, 15000, 25000, 30000,
+              30000, 45000, 90000, 120000};
+        } else {
+          runTimes = new int[] {5000, 7000, 15000};
+        }
         runLength = runTimes[random().nextInt(runTimes.length - 1)];
       }
       
@@ -175,11 +186,18 @@ public class ChaosMonkeySafeLeaderTest extends AbstractFullDistribZkTestBase {
     checkForCollection("testcollection",numShardsNumReplicas, null);
   }
 
-  private void randomlyEnableAutoSoftCommit() {
-    if (r.nextBoolean()) {
-      enableAutoSoftCommit(1000);
-    } else {
-      log.info("Not turning on auto soft commit");
+  private void tryDelete() throws Exception {
+    long start = System.nanoTime();
+    long timeout = start + TimeUnit.NANOSECONDS.convert(10, TimeUnit.SECONDS);
+    while (System.nanoTime() < timeout) {
+      try {
+        del("*:*");
+        break;
+      } catch (SolrServerException e) {
+        // cluster may not be up yet
+        e.printStackTrace();
+      }
+      Thread.sleep(100);
     }
   }
   

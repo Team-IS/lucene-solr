@@ -35,9 +35,7 @@ import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 
-@SuppressCodecs("Lucene3x")
 public class TestExpressionValueSource extends LuceneTestCase {
   DirectoryReader reader;
   Directory dir;
@@ -46,7 +44,7 @@ public class TestExpressionValueSource extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     dir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
     iwc.setMergePolicy(newLogMergePolicy());
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
     

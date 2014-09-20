@@ -18,7 +18,7 @@ package org.apache.lucene.analysis.standard;
  */
 
 import org.apache.lucene.analysis.util.TokenizerFactory;
-import org.apache.lucene.util.AttributeSource.AttributeFactory;
+import org.apache.lucene.util.AttributeFactory;
 
 import java.util.Map;
 
@@ -37,7 +37,6 @@ public class StandardTokenizerFactory extends TokenizerFactory {
   /** Creates a new StandardTokenizerFactory */
   public StandardTokenizerFactory(Map<String,String> args) {
     super(args);
-    assureMatchVersion();
     maxTokenLength = getInt(args, "maxTokenLength", StandardAnalyzer.DEFAULT_MAX_TOKEN_LENGTH);
     if (!args.isEmpty()) {
       throw new IllegalArgumentException("Unknown parameters: " + args);
@@ -46,7 +45,7 @@ public class StandardTokenizerFactory extends TokenizerFactory {
 
   @Override
   public StandardTokenizer create(AttributeFactory factory) {
-    StandardTokenizer tokenizer = new StandardTokenizer(luceneMatchVersion, factory);
+    StandardTokenizer tokenizer = new StandardTokenizer(factory);
     tokenizer.setMaxTokenLength(maxTokenLength);
     return tokenizer;
   }

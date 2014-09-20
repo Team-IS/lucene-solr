@@ -68,22 +68,43 @@ public class OverseerStatusTest extends BasicDistributedZkTest {
   public void doTest() throws Exception {
     waitForThingsToLevelOut(15);
 
+    // find existing command counts because collection may be created by base test class too
+    int numCollectionCreates = 0, numOverseerCreates = 0;
+    NamedList<Object> resp = invokeCollectionApi("action",
+        CollectionParams.CollectionAction.OVERSEERSTATUS.toLower());
+    if (resp != null) {
+      NamedList<Object> collection_operations = (NamedList<Object>) resp.get("collection_operations");
+      if (collection_operations != null)  {
+        SimpleOrderedMap<Object> createcollection = (SimpleOrderedMap<Object>) collection_operations.get(CollectionParams.CollectionAction.CREATE.toLower());
+        if (createcollection != null && createcollection.get("requests") != null) {
+          numCollectionCreates = (Integer) createcollection.get("requests");
+        }
+        NamedList<Object> overseer_operations = (NamedList<Object>) resp.get("overseer_operations");
+        if (overseer_operations != null)  {
+          createcollection = (SimpleOrderedMap<Object>) overseer_operations.get(CollectionParams.CollectionAction.CREATE.toLower());
+          if (createcollection != null && createcollection.get("requests") != null) {
+            numOverseerCreates = (Integer) createcollection.get("requests");
+          }
+        }
+      }
+    }
+
     String collectionName = "overseer_status_test";
     CollectionAdminResponse response = createCollection(collectionName, 1, 1, 1);
-    NamedList<Object> resp = invokeCollectionApi("action",
+    resp = invokeCollectionApi("action",
         CollectionParams.CollectionAction.OVERSEERSTATUS.toLower());
     NamedList<Object> collection_operations = (NamedList<Object>) resp.get("collection_operations");
     NamedList<Object> overseer_operations = (NamedList<Object>) resp.get("overseer_operations");
-    SimpleOrderedMap<Object> createcollection = (SimpleOrderedMap<Object>) collection_operations.get(OverseerCollectionProcessor.CREATECOLLECTION);
-    assertEquals("No stats for createcollection in OverseerCollectionProcessor", 1, createcollection.get("requests"));
-    createcollection = (SimpleOrderedMap<Object>) overseer_operations.get("createcollection");
-    assertEquals("No stats for createcollection in Overseer", 1, createcollection.get("requests"));
+    SimpleOrderedMap<Object> createcollection = (SimpleOrderedMap<Object>) collection_operations.get(CollectionParams.CollectionAction.CREATE.toLower());
+    assertEquals("No stats for create in OverseerCollectionProcessor", numCollectionCreates + 1, createcollection.get("requests"));
+    createcollection = (SimpleOrderedMap<Object>) overseer_operations.get(CollectionParams.CollectionAction.CREATE.toLower());
+    assertEquals("No stats for create in Overseer", numOverseerCreates + 1, createcollection.get("requests"));
 
     invokeCollectionApi("action", CollectionParams.CollectionAction.RELOAD.toLower(), "name", collectionName);
     resp = invokeCollectionApi("action",
         CollectionParams.CollectionAction.OVERSEERSTATUS.toLower());
     collection_operations = (NamedList<Object>) resp.get("collection_operations");
-    SimpleOrderedMap<Object> reload = (SimpleOrderedMap<Object>) collection_operations.get(OverseerCollectionProcessor.RELOADCOLLECTION);
+    SimpleOrderedMap<Object> reload = (SimpleOrderedMap<Object>) collection_operations.get(CollectionParams.CollectionAction.RELOAD.toLower());
     assertEquals("No stats for reload in OverseerCollectionProcessor", 1, reload.get("requests"));
 
     try {
@@ -96,28 +117,31 @@ public class OverseerStatusTest extends BasicDistributedZkTest {
     resp = invokeCollectionApi("action",
         CollectionParams.CollectionAction.OVERSEERSTATUS.toLower());
     collection_operations = (NamedList<Object>) resp.get("collection_operations");
-    SimpleOrderedMap<Object> split = (SimpleOrderedMap<Object>) collection_operations.get(OverseerCollectionProcessor.SPLITSHARD);
+    SimpleOrderedMap<Object> split = (SimpleOrderedMap<Object>) collection_operations.get(CollectionParams.CollectionAction.SPLITSHARD.toLower());
     assertEquals("No stats for split in OverseerCollectionProcessor", 1, split.get("errors"));
     assertNotNull(split.get("recent_failures"));
 
+    SimpleOrderedMap<Object> amIleader = (SimpleOrderedMap<Object>) collection_operations.get("am_i_leader");
+    assertNotNull("OverseerCollectionProcessor amILeader stats should not be null", amIleader);
+    assertNotNull(amIleader.get("requests"));
+    assertTrue(Integer.parseInt(amIleader.get("requests").toString()) > 0);
+    assertNotNull(amIleader.get("errors"));
+    assertNotNull(amIleader.get("avgTimePerRequest"));
+
+    amIleader = (SimpleOrderedMap<Object>) overseer_operations.get("am_i_leader");
+    assertNotNull("Overseer amILeader stats should not be null", amIleader);
+    assertNotNull(amIleader.get("requests"));
+    assertTrue(Integer.parseInt(amIleader.get("requests").toString()) > 0);
+    assertNotNull(amIleader.get("errors"));
+    assertNotNull(amIleader.get("avgTimePerRequest"));
+
+    SimpleOrderedMap<Object> updateState = (SimpleOrderedMap<Object>) overseer_operations.get("update_state");
+    assertNotNull("Overseer update_state stats should not be null", updateState);
+    assertNotNull(updateState.get("requests"));
+    assertTrue(Integer.parseInt(updateState.get("requests").toString()) > 0);
+    assertNotNull(updateState.get("errors"));
+    assertNotNull(updateState.get("avgTimePerRequest"));
+
     waitForThingsToLevelOut(15);
-  }
-
-  private NamedList<Object> invokeCollectionApi(String... args) throws SolrServerException, IOException {
-    ModifiableSolrParams params = new ModifiableSolrParams();
-    SolrRequest request = new QueryRequest(params);
-    for (int i = 0; i < args.length - 1; i+=2) {
-      params.add(args[i], args[i+1]);
-    }
-    request.setPath("/admin/collections");
-
-    String baseUrl = ((HttpSolrServer) shardToJetty.get(SHARD1).get(0).client.solrClient)
-        .getBaseURL();
-    baseUrl = baseUrl.substring(0, baseUrl.length() - "collection1".length());
-
-    HttpSolrServer baseServer = new HttpSolrServer(baseUrl);
-    baseServer.setConnectionTimeout(15000);
-    baseServer.setSoTimeout(60000 * 5);
-    return baseServer.request(request);
   }
 }

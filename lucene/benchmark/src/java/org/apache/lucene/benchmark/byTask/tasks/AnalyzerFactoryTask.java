@@ -27,9 +27,11 @@ import org.apache.lucene.benchmark.byTask.PerfRunData;
 import org.apache.lucene.benchmark.byTask.utils.AnalyzerFactory;
 import org.apache.lucene.util.Version;
 
-import java.io.File;
 import java.io.StreamTokenizer;
 import java.io.StringReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -58,8 +60,8 @@ import java.util.regex.Pattern;
  *   <li>zero or more TokenFilterFactory's</li>
  * </ol>
  *
- * Each component analysis factory map specify <tt>luceneMatchVersion</tt> (defaults to
- * {@link Version#LUCENE_CURRENT}) and any of the args understood by the specified
+ * Each component analysis factory may specify <tt>luceneMatchVersion</tt> (defaults to
+ * {@link Version#LATEST}) and any of the args understood by the specified
  * *Factory class, in the above-describe param format.
  * <p/>
  * Example:
@@ -68,7 +70,7 @@ import java.util.regex.Pattern;
  *                      positionIncrementGap:100,
  *                      HTMLStripCharFilter,
  *                      MappingCharFilter(mapping:'mapping-FoldToASCII.txt'),
- *                      WhitespaceTokenizer(luceneMatchVersion:LUCENE_42),
+ *                      WhitespaceTokenizer(luceneMatchVersion:LUCENE_5_0_0),
  *                      TokenLimitFilter(maxTokenCount:10000, consumeAllTokens:false))
  *     [...]
  *     -NewAnalyzer('strip html, fold to ascii, whitespace tokenize, max 10k tokens')
@@ -355,7 +357,7 @@ public class AnalyzerFactoryTask extends PerfTask {
         }
       }
       if (!argMap.containsKey("luceneMatchVersion")) {
-        argMap.put("luceneMatchVersion", Version.LUCENE_CURRENT.toString());
+        argMap.put("luceneMatchVersion", Version.LATEST.toString());
       }
       final AbstractAnalysisFactory instance;
       try {
@@ -364,9 +366,9 @@ public class AnalyzerFactoryTask extends PerfTask {
         throw new RuntimeException("Line #" + lineno(stok) + ": ", e);
       }
       if (instance instanceof ResourceLoaderAware) {
-        File baseDir = new File(getRunData().getConfig().get("work.dir", "work")).getAbsoluteFile();
-        if ( ! baseDir.isDirectory()) {
-          baseDir = new File(".").getAbsoluteFile();
+        Path baseDir = Paths.get(getRunData().getConfig().get("work.dir", "work"));
+        if (!Files.isDirectory(baseDir)) {
+          baseDir = Paths.get(".");
         }
         ((ResourceLoaderAware)instance).inform(new FilesystemResourceLoader(baseDir));
       }

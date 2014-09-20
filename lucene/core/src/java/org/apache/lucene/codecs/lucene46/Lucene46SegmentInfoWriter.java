@@ -28,6 +28,7 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.Version;
 
 /**
  * Lucene 4.0 implementation of {@link SegmentInfoWriter}.
@@ -52,19 +53,25 @@ public class Lucene46SegmentInfoWriter extends SegmentInfoWriter {
     boolean success = false;
     try {
       CodecUtil.writeHeader(output, Lucene46SegmentInfoFormat.CODEC_NAME, Lucene46SegmentInfoFormat.VERSION_CURRENT);
+      Version version = si.getVersion();
+      if (version.major < 4) {
+        throw new IllegalArgumentException("invalid major version: should be >= 4 but got: " + version.major + " segment=" + si);
+      }
       // Write the Lucene version that created this segment, since 3.1
-      output.writeString(si.getVersion());
+      output.writeString(version.toString());
       output.writeInt(si.getDocCount());
 
       output.writeByte((byte) (si.getUseCompoundFile() ? SegmentInfo.YES : SegmentInfo.NO));
       output.writeStringStringMap(si.getDiagnostics());
       output.writeStringSet(si.files());
-
+      output.writeString(si.getId());
+      CodecUtil.writeFooter(output);
       success = true;
     } finally {
       if (!success) {
         IOUtils.closeWhileHandlingException(output);
-        si.dir.deleteFile(fileName);
+        // TODO: are we doing this outside of the tracking wrapper? why must SIWriter cleanup like this?
+        IOUtils.deleteFilesIgnoringExceptions(si.dir, fileName);
       } else {
         output.close();
       }

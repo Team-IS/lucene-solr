@@ -21,7 +21,6 @@ import java.util.Iterator;
 import org.apache.lucene.index.DocumentsWriterPerThreadPool.ThreadState;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.InfoStream;
-import org.apache.lucene.util.SetOnce;
 
 /**
  * {@link FlushPolicy} controls when segments are flushed from a RAM resident
@@ -52,7 +51,7 @@ import org.apache.lucene.util.SetOnce;
  * @see DocumentsWriterPerThread
  * @see IndexWriterConfig#setFlushPolicy(FlushPolicy)
  */
-abstract class FlushPolicy implements Cloneable {
+abstract class FlushPolicy {
   protected LiveIndexWriterConfig indexWriterConfig;
   protected InfoStream infoStream;
 
@@ -113,15 +112,25 @@ abstract class FlushPolicy implements Cloneable {
     ThreadState maxRamUsingThreadState = perThreadState;
     assert !perThreadState.flushPending : "DWPT should have flushed";
     Iterator<ThreadState> activePerThreadsIterator = control.allActiveThreadStates();
+    int count = 0;
     while (activePerThreadsIterator.hasNext()) {
       ThreadState next = activePerThreadsIterator.next();
       if (!next.flushPending) {
         final long nextRam = next.bytesUsed;
-        if (nextRam > maxRamSoFar && next.dwpt.getNumDocsInRAM() > 0) {
-          maxRamSoFar = nextRam;
-          maxRamUsingThreadState = next;
+        if (nextRam > 0 && next.dwpt.getNumDocsInRAM() > 0) {
+          if (infoStream.isEnabled("FP")) {
+            infoStream.message("FP", "thread state has " + nextRam + " bytes; docInRAM=" + next.dwpt.getNumDocsInRAM());
+          }
+          count++;
+          if (nextRam > maxRamSoFar) {
+            maxRamSoFar = nextRam;
+            maxRamUsingThreadState = next;
+          }
         }
       }
+    }
+    if (infoStream.isEnabled("FP")) {
+      infoStream.message("FP", count + " in-use non-flushing threads states");
     }
     assert assertMessage("set largest ram consuming thread pending on lower watermark");
     return maxRamUsingThreadState;
@@ -132,19 +141,5 @@ abstract class FlushPolicy implements Cloneable {
       infoStream.message("FP", s);
     }
     return true;
-  }
-
-  @Override
-  public FlushPolicy clone() {
-    FlushPolicy clone;
-    try {
-      clone = (FlushPolicy) super.clone();
-    } catch (CloneNotSupportedException e) {
-      // should not happen
-      throw new RuntimeException(e);
-    }
-    clone.indexWriterConfig = null;
-    clone.infoStream = null; 
-    return clone;
   }
 }

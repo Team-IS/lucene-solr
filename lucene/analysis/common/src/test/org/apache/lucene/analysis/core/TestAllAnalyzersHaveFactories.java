@@ -29,6 +29,7 @@ import java.util.Set;
 
 import org.apache.lucene.analysis.CachingTokenFilter;
 import org.apache.lucene.analysis.CharFilter;
+import org.apache.lucene.analysis.CrankyTokenFilter;
 import org.apache.lucene.analysis.MockCharFilter;
 import org.apache.lucene.analysis.MockFixedLengthPayloadFilter;
 import org.apache.lucene.analysis.MockGraphTokenFilter;
@@ -53,6 +54,7 @@ import org.apache.lucene.analysis.util.StringMockResourceLoader;
 import org.apache.lucene.analysis.util.TokenFilterFactory;
 import org.apache.lucene.analysis.util.TokenizerFactory;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.Version;
 
 /**
  * Tests that any newly added Tokenizers/TokenFilters/CharFilters have a
@@ -72,7 +74,8 @@ public class TestAllAnalyzersHaveFactories extends LuceneTestCase {
       MockRandomLookaheadTokenFilter.class,
       MockTokenFilter.class,
       MockVariableLengthPayloadFilter.class,
-      ValidatingTokenFilter.class
+      ValidatingTokenFilter.class,
+      CrankyTokenFilter.class
     );
   }
   
@@ -112,18 +115,20 @@ public class TestAllAnalyzersHaveFactories extends LuceneTestCase {
         || testComponents.contains(c)
         || crazyComponents.contains(c)
         || oddlyNamedComponents.contains(c)
+        || c.isAnnotationPresent(Deprecated.class) // deprecated ones are typically back compat hacks
         || !(Tokenizer.class.isAssignableFrom(c) || TokenFilter.class.isAssignableFrom(c) || CharFilter.class.isAssignableFrom(c))
       ) {
         continue;
       }
       
       Map<String,String> args = new HashMap<>();
-      args.put("luceneMatchVersion", TEST_VERSION_CURRENT.toString());
+      args.put("luceneMatchVersion", Version.LATEST.toString());
       
       if (Tokenizer.class.isAssignableFrom(c)) {
         String clazzName = c.getSimpleName();
         assertTrue(clazzName.endsWith("Tokenizer"));
         String simpleName = clazzName.substring(0, clazzName.length() - 9);
+        assertNotNull(TokenizerFactory.lookupClass(simpleName));
         TokenizerFactory instance = null;
         try {
           instance = TokenizerFactory.forName(simpleName, args);
@@ -133,7 +138,8 @@ public class TestAllAnalyzersHaveFactories extends LuceneTestCase {
           }
           assertSame(c, instance.create().getClass());
         } catch (IllegalArgumentException e) {
-          if (!e.getMessage().contains("SPI")) {
+          if (e.getCause() instanceof NoSuchMethodException) {
+            // there is no corresponding ctor available
             throw e;
           }
           // TODO: For now pass because some factories have not yet a default config that always works
@@ -142,6 +148,7 @@ public class TestAllAnalyzersHaveFactories extends LuceneTestCase {
         String clazzName = c.getSimpleName();
         assertTrue(clazzName.endsWith("Filter"));
         String simpleName = clazzName.substring(0, clazzName.length() - (clazzName.endsWith("TokenFilter") ? 11 : 6));
+        assertNotNull(TokenFilterFactory.lookupClass(simpleName));
         TokenFilterFactory instance = null; 
         try {
           instance = TokenFilterFactory.forName(simpleName, args);
@@ -155,7 +162,8 @@ public class TestAllAnalyzersHaveFactories extends LuceneTestCase {
             assertSame(c, createdClazz);
           }
         } catch (IllegalArgumentException e) {
-          if (!e.getMessage().contains("SPI")) {
+          if (e.getCause() instanceof NoSuchMethodException) {
+            // there is no corresponding ctor available
             throw e;
           }
           // TODO: For now pass because some factories have not yet a default config that always works
@@ -164,6 +172,7 @@ public class TestAllAnalyzersHaveFactories extends LuceneTestCase {
         String clazzName = c.getSimpleName();
         assertTrue(clazzName.endsWith("CharFilter"));
         String simpleName = clazzName.substring(0, clazzName.length() - 10);
+        assertNotNull(CharFilterFactory.lookupClass(simpleName));
         CharFilterFactory instance = null;
         try {
           instance = CharFilterFactory.forName(simpleName, args);
@@ -177,7 +186,8 @@ public class TestAllAnalyzersHaveFactories extends LuceneTestCase {
             assertSame(c, createdClazz);
           }
         } catch (IllegalArgumentException e) {
-          if (!e.getMessage().contains("SPI")) {
+          if (e.getCause() instanceof NoSuchMethodException) {
+            // there is no corresponding ctor available
             throw e;
           }
           // TODO: For now pass because some factories have not yet a default config that always works

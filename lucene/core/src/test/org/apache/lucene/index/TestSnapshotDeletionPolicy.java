@@ -29,6 +29,7 @@ import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.ThreadInterruptedException;
 import org.junit.Test;
@@ -42,7 +43,7 @@ public class TestSnapshotDeletionPolicy extends LuceneTestCase {
   public static final String INDEX_PATH = "test.snapshots";
   
   protected IndexWriterConfig getConfig(Random random, IndexDeletionPolicy dp) {
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random));
     if (dp != null) {
       conf.setIndexDeletionPolicy(dp);
     }
@@ -51,7 +52,7 @@ public class TestSnapshotDeletionPolicy extends LuceneTestCase {
 
   protected void checkSnapshotExists(Directory dir, IndexCommit c) throws Exception {
     String segFileName = c.getSegmentsFileName();
-    assertTrue("segments file not found in directory: " + segFileName, dir.fileExists(segFileName));
+    assertTrue("segments file not found in directory: " + segFileName, slowFileExists(dir, segFileName));
   }
 
   protected void checkMaxDoc(IndexCommit commit, int expectedMaxDoc) throws Exception {
@@ -101,12 +102,16 @@ public class TestSnapshotDeletionPolicy extends LuceneTestCase {
   }
 
   private void runTest(Random random, Directory dir) throws Exception {
+    // we use the IW unref'ed files check which is unaware of retries:
+    if (dir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)dir).setEnableVirusScanner(false);
+    }
     // Run for ~1 seconds
     final long stopTime = System.currentTimeMillis() + 1000;
 
     SnapshotDeletionPolicy dp = getDeletionPolicy();
-    final IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random)).setIndexDeletionPolicy(dp)
+    final IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random))
+        .setIndexDeletionPolicy(dp)
         .setMaxBufferedDocs(2));
 
     // Verify we catch misuse:
@@ -251,6 +256,10 @@ public class TestSnapshotDeletionPolicy extends LuceneTestCase {
     
     // Create 3 snapshots: snapshot0, snapshot1, snapshot2
     Directory dir = newDirectory();
+    if (dir instanceof MockDirectoryWrapper) {
+      // we verify some files get deleted
+      ((MockDirectoryWrapper)dir).setEnableVirusScanner(false);
+    }
     IndexWriter writer = new IndexWriter(dir, getConfig(random(), getDeletionPolicy()));
     SnapshotDeletionPolicy sdp = (SnapshotDeletionPolicy) writer.getConfig().getIndexDeletionPolicy();
     prepareIndexAndSnapshots(sdp, writer, numSnapshots);
@@ -275,6 +284,10 @@ public class TestSnapshotDeletionPolicy extends LuceneTestCase {
   @Test
   public void testMultiThreadedSnapshotting() throws Exception {
     Directory dir = newDirectory();
+    if (dir instanceof MockDirectoryWrapper) {
+      // test relies on files actually being deleted
+      ((MockDirectoryWrapper)dir).setEnableVirusScanner(false);
+    }
     final IndexWriter writer = new IndexWriter(dir, getConfig(random(), getDeletionPolicy()));
     final SnapshotDeletionPolicy sdp = (SnapshotDeletionPolicy) writer.getConfig().getIndexDeletionPolicy();
 
@@ -338,7 +351,7 @@ public class TestSnapshotDeletionPolicy extends LuceneTestCase {
 
     // but 'snapshot1' files will still exist (need to release snapshot before they can be deleted).
     String segFileName = snapshots.get(1).getSegmentsFileName();
-    assertTrue("snapshot files should exist in the directory: " + segFileName, dir.fileExists(segFileName));
+    assertTrue("snapshot files should exist in the directory: " + segFileName, slowFileExists(dir, segFileName));
 
     dir.close();
   }
@@ -346,6 +359,10 @@ public class TestSnapshotDeletionPolicy extends LuceneTestCase {
   @Test
   public void testReleaseSnapshot() throws Exception {
     Directory dir = newDirectory();
+    if (dir instanceof MockDirectoryWrapper) {
+      // we rely upon existence of files
+      ((MockDirectoryWrapper)dir).setEnableVirusScanner(false);
+    }
     IndexWriter writer = new IndexWriter(dir, getConfig(random(), getDeletionPolicy()));
     SnapshotDeletionPolicy sdp = (SnapshotDeletionPolicy) writer.getConfig().getIndexDeletionPolicy();
     prepareIndexAndSnapshots(sdp, writer, 1);
@@ -360,7 +377,7 @@ public class TestSnapshotDeletionPolicy extends LuceneTestCase {
     sdp.release(snapshots.get(0));
     writer.deleteUnusedFiles();
     writer.close();
-    assertFalse("segments file should not be found in dirctory: " + segFileName, dir.fileExists(segFileName));
+    assertFalse("segments file should not be found in dirctory: " + segFileName, slowFileExists(dir, segFileName));
     dir.close();
   }
 
@@ -395,6 +412,10 @@ public class TestSnapshotDeletionPolicy extends LuceneTestCase {
     // Tests the behavior of SDP when commits that are given at ctor are missing
     // on onInit().
     Directory dir = newDirectory();
+    if (dir instanceof MockDirectoryWrapper) {
+      // we rely upon existence of files
+      ((MockDirectoryWrapper)dir).setEnableVirusScanner(false);
+    }
     IndexWriter writer = new IndexWriter(dir, getConfig(random(), getDeletionPolicy()));
     SnapshotDeletionPolicy sdp = (SnapshotDeletionPolicy) writer.getConfig().getIndexDeletionPolicy();
     writer.addDocument(new Document());
@@ -409,7 +430,7 @@ public class TestSnapshotDeletionPolicy extends LuceneTestCase {
     // commit.
     new IndexWriter(dir, getConfig(random(), null)).close();
     
-    assertFalse("snapshotted commit should not exist", dir.fileExists(s1.getSegmentsFileName()));
+    assertFalse("snapshotted commit should not exist", slowFileExists(dir, s1.getSegmentsFileName()));
     dir.close();
   }
 }

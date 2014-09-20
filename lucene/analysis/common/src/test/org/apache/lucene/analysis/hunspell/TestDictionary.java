@@ -21,12 +21,14 @@ import java.io.ByteArrayInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.CharsRef;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.IntsRefBuilder;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.fst.Builder;
 import org.apache.lucene.util.fst.CharSequenceOutputs;
@@ -186,23 +188,23 @@ public class TestDictionary extends LuceneTestCase {
   public void testReplacements() throws Exception {
     Outputs<CharsRef> outputs = CharSequenceOutputs.getSingleton();
     Builder<CharsRef> builder = new Builder<>(FST.INPUT_TYPE.BYTE2, outputs);
-    IntsRef scratchInts = new IntsRef();
+    IntsRefBuilder scratchInts = new IntsRefBuilder();
     
     // a -> b
     Util.toUTF16("a", scratchInts);
-    builder.add(scratchInts, new CharsRef("b"));
+    builder.add(scratchInts.get(), new CharsRef("b"));
     
     // ab -> c
     Util.toUTF16("ab", scratchInts);
-    builder.add(scratchInts, new CharsRef("c"));
+    builder.add(scratchInts.get(), new CharsRef("c"));
     
     // c -> de
     Util.toUTF16("c", scratchInts);
-    builder.add(scratchInts, new CharsRef("de"));
+    builder.add(scratchInts.get(), new CharsRef("de"));
     
     // def -> gh
     Util.toUTF16("def", scratchInts);
-    builder.add(scratchInts, new CharsRef("gh"));
+    builder.add(scratchInts.get(), new CharsRef("gh"));
     
     FST<CharsRef> fst = builder.finish();
     
@@ -232,10 +234,10 @@ public class TestDictionary extends LuceneTestCase {
   }
   
   public void testSetWithCrazyWhitespaceAndBOMs() throws Exception {
-    assertEquals("UTF-8", Dictionary.getDictionaryEncoding(new ByteArrayInputStream("SET\tUTF-8\n".getBytes(IOUtils.CHARSET_UTF_8))));
-    assertEquals("UTF-8", Dictionary.getDictionaryEncoding(new ByteArrayInputStream("SET\t UTF-8\n".getBytes(IOUtils.CHARSET_UTF_8))));
-    assertEquals("UTF-8", Dictionary.getDictionaryEncoding(new ByteArrayInputStream("\uFEFFSET\tUTF-8\n".getBytes(IOUtils.CHARSET_UTF_8))));
-    assertEquals("UTF-8", Dictionary.getDictionaryEncoding(new ByteArrayInputStream("\uFEFFSET\tUTF-8\r\n".getBytes(IOUtils.CHARSET_UTF_8))));
+    assertEquals("UTF-8", Dictionary.getDictionaryEncoding(new ByteArrayInputStream("SET\tUTF-8\n".getBytes(StandardCharsets.UTF_8))));
+    assertEquals("UTF-8", Dictionary.getDictionaryEncoding(new ByteArrayInputStream("SET\t UTF-8\n".getBytes(StandardCharsets.UTF_8))));
+    assertEquals("UTF-8", Dictionary.getDictionaryEncoding(new ByteArrayInputStream("\uFEFFSET\tUTF-8\n".getBytes(StandardCharsets.UTF_8))));
+    assertEquals("UTF-8", Dictionary.getDictionaryEncoding(new ByteArrayInputStream("\uFEFFSET\tUTF-8\r\n".getBytes(StandardCharsets.UTF_8))));
   }
   
   public void testFlagWithCrazyWhitespace() throws Exception {

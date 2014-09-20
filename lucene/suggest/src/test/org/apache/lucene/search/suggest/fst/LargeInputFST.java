@@ -19,12 +19,13 @@ package org.apache.lucene.search.suggest.fst;
 
 
 import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
-import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.OfflineSorter;
 
 /**
@@ -33,7 +34,7 @@ import org.apache.lucene.util.OfflineSorter;
  */
 public class LargeInputFST {
   public static void main(String[] args) throws IOException {
-    File input = new File("/home/dweiss/tmp/shuffled.dict");
+    Path input = Paths.get("/home/dweiss/tmp/shuffled.dict");
 
     int buckets = 20;
     int shareMaxTail = 10;
@@ -41,16 +42,14 @@ public class LargeInputFST {
     ExternalRefSorter sorter = new ExternalRefSorter(new OfflineSorter());
     FSTCompletionBuilder builder = new FSTCompletionBuilder(buckets, sorter, shareMaxTail);
 
-    BufferedReader reader = new BufferedReader(
-        new InputStreamReader(
-            new FileInputStream(input), "UTF-8"));
+    BufferedReader reader = Files.newBufferedReader(input, StandardCharsets.UTF_8);
     
-    BytesRef scratch = new BytesRef();
+    BytesRefBuilder scratch = new BytesRefBuilder();
     String line;
     int count = 0;
     while ((line = reader.readLine()) != null) {
       scratch.copyChars(line);
-      builder.add(scratch, count % buckets);
+      builder.add(scratch.get(), count % buckets);
       if ((count++ % 100000) == 0) {
         System.err.println("Line: " + count);
       }
@@ -59,8 +58,8 @@ public class LargeInputFST {
     System.out.println("Building FSTCompletion.");
     FSTCompletion completion = builder.build();
 
-    File fstFile = new File("completion.fst");
-    System.out.println("Done. Writing automaton: " + fstFile.getAbsolutePath());
+    Path fstFile = Paths.get("completion.fst");
+    System.out.println("Done. Writing automaton: " + fstFile.toAbsolutePath());
     completion.getFST().save(fstFile);
     sorter.close();
   }

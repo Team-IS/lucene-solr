@@ -5,20 +5,22 @@ import org.apache.lucene.analysis.BaseTokenStreamTestCase;
 import org.apache.lucene.analysis.TokenFilter;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.Tokenizer;
-import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.analysis.standard.UAX29URLEmailTokenizer;
 import org.apache.lucene.analysis.tokenattributes.TypeAttribute;
-import org.apache.lucene.util.Version;
+import org.apache.lucene.util.TestUtil;
 
 import java.io.BufferedReader;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
+import java.util.regex.Pattern;
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
@@ -38,7 +40,42 @@ import java.util.Random;
  */
 
 public class TestUAX29URLEmailTokenizer extends BaseTokenStreamTestCase {
-  
+
+  // LUCENE-5440: extremely slow tokenization of text matching email <local-part> (before the '@')
+  public void testLongEMAILatomText() throws Exception {
+    // EMAILatomText = [A-Za-z0-9!#$%&'*+-/=?\^_`{|}~]
+    char[] emailAtomChars
+        = "!#$%&'*+,-./0123456789=?ABCDEFGHIJKLMNOPQRSTUVWXYZ^_`abcdefghijklmnopqrstuvwxyz{|}~".toCharArray();
+    StringBuilder builder = new StringBuilder();
+    int numChars = TestUtil.nextInt(random(), 100 * 1024, 3 * 1024 * 1024);
+    for (int i = 0 ; i < numChars ; ++i) {
+      builder.append(emailAtomChars[random().nextInt(emailAtomChars.length)]);
+    }
+    int tokenCount = 0;
+    UAX29URLEmailTokenizer ts = new UAX29URLEmailTokenizer();
+    String text = builder.toString();
+    ts.setReader(new StringReader(text));
+    ts.reset();
+    while (ts.incrementToken()) {
+      tokenCount++;
+    }
+    ts.end();
+    ts.close();
+    assertTrue(tokenCount > 0);
+
+    tokenCount = 0;
+    int newBufferSize = TestUtil.nextInt(random(), 200, 8192);
+    ts.setMaxTokenLength(newBufferSize);
+    ts.setReader(new StringReader(text));
+    ts.reset();
+    while (ts.incrementToken()) {
+      tokenCount++;
+    }
+    ts.end();
+    ts.close();
+    assertTrue(tokenCount > 0);
+  }
+
   public void testHugeDoc() throws IOException {
     StringBuilder sb = new StringBuilder();
     char whitespace[] = new char[4094];
@@ -46,7 +83,7 @@ public class TestUAX29URLEmailTokenizer extends BaseTokenStreamTestCase {
     sb.append(whitespace);
     sb.append("testing 1234");
     String input = sb.toString();
-    UAX29URLEmailTokenizer tokenizer = new UAX29URLEmailTokenizer(TEST_VERSION_CURRENT);
+    UAX29URLEmailTokenizer tokenizer = new UAX29URLEmailTokenizer(newAttributeFactory());
     tokenizer.setReader(new StringReader(input));
     BaseTokenStreamTestCase.assertTokenStreamContents(tokenizer, new String[] { "testing", "1234" });
   }
@@ -55,7 +92,7 @@ public class TestUAX29URLEmailTokenizer extends BaseTokenStreamTestCase {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
 
-      Tokenizer tokenizer = new UAX29URLEmailTokenizer(TEST_VERSION_CURRENT);
+      Tokenizer tokenizer = new UAX29URLEmailTokenizer(newAttributeFactory());
       return new TokenStreamComponents(tokenizer);
     }
   };
@@ -102,7 +139,7 @@ public class TestUAX29URLEmailTokenizer extends BaseTokenStreamTestCase {
   private Analyzer urlAnalyzer = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      UAX29URLEmailTokenizer tokenizer = new UAX29URLEmailTokenizer(TEST_VERSION_CURRENT);
+      UAX29URLEmailTokenizer tokenizer = new UAX29URLEmailTokenizer(newAttributeFactory());
       tokenizer.setMaxTokenLength(Integer.MAX_VALUE);  // Tokenize arbitrary length URLs
       TokenFilter filter = new URLFilter(tokenizer);
       return new TokenStreamComponents(tokenizer, filter);
@@ -112,7 +149,7 @@ public class TestUAX29URLEmailTokenizer extends BaseTokenStreamTestCase {
   private Analyzer emailAnalyzer = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      UAX29URLEmailTokenizer tokenizer = new UAX29URLEmailTokenizer(TEST_VERSION_CURRENT);
+      UAX29URLEmailTokenizer tokenizer = new UAX29URLEmailTokenizer(newAttributeFactory());
       TokenFilter filter = new EmailFilter(tokenizer);
       return new TokenStreamComponents(tokenizer, filter);
     }
@@ -269,7 +306,7 @@ public class TestUAX29URLEmailTokenizer extends BaseTokenStreamTestCase {
     String luceneResourcesWikiPage;
     try {
       reader = new InputStreamReader(getClass().getResourceAsStream
-        ("LuceneResourcesWikiPage.html"), "UTF-8");
+        ("LuceneResourcesWikiPage.html"), StandardCharsets.UTF_8);
       StringBuilder builder = new StringBuilder();
       char[] buffer = new char[1024];
       int numCharsRead;
@@ -289,7 +326,7 @@ public class TestUAX29URLEmailTokenizer extends BaseTokenStreamTestCase {
     try {
       List<String> urlList = new ArrayList<>();
       bufferedReader = new BufferedReader(new InputStreamReader
-        (getClass().getResourceAsStream("LuceneResourcesWikiPageURLs.txt"), "UTF-8"));
+        (getClass().getResourceAsStream("LuceneResourcesWikiPageURLs.txt"), StandardCharsets.UTF_8));
       String line;
       while (null != (line = bufferedReader.readLine())) {
         line = line.trim();
@@ -313,7 +350,7 @@ public class TestUAX29URLEmailTokenizer extends BaseTokenStreamTestCase {
     String randomTextWithEmails;
     try {
       reader = new InputStreamReader(getClass().getResourceAsStream
-        ("random.text.with.email.addresses.txt"), "UTF-8");
+        ("random.text.with.email.addresses.txt"), StandardCharsets.UTF_8);
       StringBuilder builder = new StringBuilder();
       char[] buffer = new char[1024];
       int numCharsRead;
@@ -334,7 +371,7 @@ public class TestUAX29URLEmailTokenizer extends BaseTokenStreamTestCase {
       List<String> emailList = new ArrayList<>();
       bufferedReader = new BufferedReader(new InputStreamReader
         (getClass().getResourceAsStream
-          ("email.addresses.from.random.text.with.email.addresses.txt"), "UTF-8"));
+          ("email.addresses.from.random.text.with.email.addresses.txt"), StandardCharsets.UTF_8));
       String line;
       while (null != (line = bufferedReader.readLine())) {
         line = line.trim();
@@ -383,7 +420,7 @@ public class TestUAX29URLEmailTokenizer extends BaseTokenStreamTestCase {
     String randomTextWithURLs;
     try {
       reader = new InputStreamReader(getClass().getResourceAsStream
-        ("random.text.with.urls.txt"), "UTF-8");
+        ("random.text.with.urls.txt"), StandardCharsets.UTF_8);
       StringBuilder builder = new StringBuilder();
       char[] buffer = new char[1024];
       int numCharsRead;
@@ -404,7 +441,7 @@ public class TestUAX29URLEmailTokenizer extends BaseTokenStreamTestCase {
       List<String> urlList = new ArrayList<>();
       bufferedReader = new BufferedReader(new InputStreamReader
         (getClass().getResourceAsStream
-          ("urls.from.random.text.with.urls.txt"), "UTF-8"));
+          ("urls.from.random.text.with.urls.txt"), StandardCharsets.UTF_8));
       String line;
       while (null != (line = bufferedReader.readLine())) {
         line = line.trim();

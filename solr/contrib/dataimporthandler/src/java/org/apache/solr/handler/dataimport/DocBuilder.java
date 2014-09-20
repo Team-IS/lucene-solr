@@ -80,13 +80,10 @@ public class DocBuilder {
   private Map<String, Object> persistedProperties;
   
   private DIHProperties propWriter;
-  private static final String PARAM_WRITER_IMPL = "writerImpl";
-  private static final String DEFAULT_WRITER_NAME = "SolrWriter";
   private DebugLogger debugLogger;
   private final RequestInfo reqParams;
   
-  @SuppressWarnings("unchecked")
-  public DocBuilder(DataImporter dataImporter, SolrWriter solrWriter, DIHProperties propWriter, RequestInfo reqParams) {
+  public DocBuilder(DataImporter dataImporter, DIHWriter solrWriter, DIHProperties propWriter, RequestInfo reqParams) {
     INSTANCE.set(this);
     this.dataImporter = dataImporter;
     this.reqParams = reqParams;
@@ -95,22 +92,11 @@ public class DocBuilder {
     verboseDebug = reqParams.isDebug() && reqParams.getDebugInfo().verbose;
     persistedProperties = propWriter.readIndexerProperties();
      
-    String writerClassStr = null;
-    if(reqParams!=null && reqParams.getRawParams() != null) {
-      writerClassStr = (String) reqParams.getRawParams().get(PARAM_WRITER_IMPL);
-    }
-    if(writerClassStr != null && !writerClassStr.equals(DEFAULT_WRITER_NAME) && !writerClassStr.equals(DocBuilder.class.getPackage().getName() + "." + DEFAULT_WRITER_NAME)) {
-      try {
-        Class<DIHWriter> writerClass = loadClass(writerClassStr, dataImporter.getCore());
-        this.writer = writerClass.newInstance();
-      } catch (Exception e) {
-        throw new DataImportHandlerException(DataImportHandlerException.SEVERE, "Unable to load Writer implementation:" + writerClassStr, e);
-      }
-     } else {
-      writer = solrWriter;
-    }
+    writer = solrWriter;
     ContextImpl ctx = new ContextImpl(null, null, null, null, reqParams.getRawParams(), null, this);
-    writer.init(ctx);
+    if (writer != null) {
+      writer.init(ctx);
+    }
   }
 
 
@@ -141,6 +127,7 @@ public class DocBuilder {
       }
       indexerNamespace.put(INDEX_START_TIME, dataImporter.getIndexStartTime());
       indexerNamespace.put("request", new HashMap<>(reqParams.getRawParams()));
+      indexerNamespace.put("handlerName", dataImporter.getHandlerName());
       for (Entity entity : dataImporter.getConfig().getEntities()) {
         Map<String, Object> entityNamespace = new HashMap<>();
         String key = SolrWriter.LAST_INDEX_KEY;
@@ -161,25 +148,31 @@ public class DocBuilder {
       return null;
     }
   }
-  
 
   private void invokeEventListener(String className) {
+    invokeEventListener(className, null);
+  }
+
+
+  private void invokeEventListener(String className, Exception lastException) {
     try {
       EventListener listener = (EventListener) loadClass(className, dataImporter.getCore()).newInstance();
-      notifyListener(listener);
+      notifyListener(listener, lastException);
     } catch (Exception e) {
       wrapAndThrow(SEVERE, e, "Unable to load class : " + className);
     }
   }
 
-  private void notifyListener(EventListener listener) {
+  private void notifyListener(EventListener listener, Exception lastException) {
     String currentProcess;
     if (dataImporter.getStatus() == DataImporter.Status.RUNNING_DELTA_DUMP) {
       currentProcess = Context.DELTA_DUMP;
     } else {
       currentProcess = Context.FULL_DUMP;
     }
-    listener.onEvent(new ContextImpl(null, getVariableResolver(), null, currentProcess, session, null, this));
+    ContextImpl ctx = new ContextImpl(null, getVariableResolver(), null, currentProcess, session, null, this);
+    ctx.lastException = lastException;
+    listener.onEvent(ctx);
   }
 
   @SuppressWarnings("unchecked")
@@ -249,7 +242,7 @@ public class DocBuilder {
       if (stop.get()) {
         // Dont commit if aborted using command=abort
         statusMessages.put("Aborted", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new Date()));
-        rollback();
+        handleError("Aborted", null);
       } else {
         // Do not commit unnecessarily if this is a delta-import and no documents were created or deleted
         if (!reqParams.isClean()) {
@@ -320,10 +313,16 @@ public class DocBuilder {
     }
   }
 
-  void rollback() {
-    writer.rollback();
-    statusMessages.put("", "Indexing failed. Rolled back all changes.");
-    addStatusMessage("Rolledback");
+  void handleError(String message, Exception e) {
+    if (!dataImporter.getCore().getCoreDescriptor().getCoreContainer().isZooKeeperAware()) {
+      writer.rollback();
+    }
+
+    statusMessages.put(message, "Indexing error");
+    addStatusMessage(message);
+    if ((config != null) && (config.getOnError() != null)) {
+      invokeEventListener(config.getOnError(), e);
+    }
   }
 
   private void doFullDump() {
@@ -700,7 +699,7 @@ public class DocBuilder {
     }
   }
 
-  private EntityProcessorWrapper getEntityProcessorWrapper(Entity entity) {
+  public EntityProcessorWrapper getEntityProcessorWrapper(Entity entity) {
     EntityProcessor entityProcessor = null;
     if (entity.getProcessorName() == null) {
       entityProcessor = new SqlEntityProcessor();
@@ -904,9 +903,6 @@ public class DocBuilder {
   public RequestInfo getReqParams() {
     return reqParams;
   }
-
-
-
 
   @SuppressWarnings("unchecked")
   static Class loadClass(String name, SolrCore core) throws ClassNotFoundException {

@@ -16,15 +16,16 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
+
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
@@ -40,18 +41,17 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.TrackingDirectoryWrapper;
-import org.apache.lucene.util.Constants;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.Version;
 
 
 /** JUnit adaptation of an older test case DocTest. */
 public class TestDoc extends LuceneTestCase {
 
-    private File workDir;
-    private File indexDir;
-    private LinkedList<File> files;
+    private Path workDir;
+    private Path indexDir;
+    private LinkedList<Path> files;
 
     /** Set the test case. This test case needs
      *  a few text files created in the current working directory.
@@ -62,11 +62,8 @@ public class TestDoc extends LuceneTestCase {
         if (VERBOSE) {
           System.out.println("TEST: setUp");
         }
-        workDir = TestUtil.getTempDir("TestDoc");
-        workDir.mkdirs();
-
-        indexDir = TestUtil.getTempDir("testIndex");
-        indexDir.mkdirs();
+        workDir = createTempDir("TestDoc");
+        indexDir = createTempDir("testIndex");
 
         Directory directory = newFSDirectory(indexDir);
         directory.close();
@@ -81,18 +78,18 @@ public class TestDoc extends LuceneTestCase {
         ));
     }
 
-    private File createOutput(String name, String text) throws IOException {
+    private Path createOutput(String name, String text) throws IOException {
         Writer fw = null;
         PrintWriter pw = null;
 
         try {
-            File f = new File(workDir, name);
-            if (f.exists()) f.delete();
+            Path path = workDir.resolve(name);
+            Files.deleteIfExists(path);
 
-            fw = new OutputStreamWriter(new FileOutputStream(f), "UTF-8");
+            fw = new OutputStreamWriter(Files.newOutputStream(path), StandardCharsets.UTF_8);
             pw = new PrintWriter(fw);
             pw.println(text);
-            return f;
+            return path;
 
         } finally {
             if (pw != null) pw.close();
@@ -119,11 +116,13 @@ public class TestDoc extends LuceneTestCase {
         // We create unreferenced files (we don't even write
         // a segments file):
         ((MockDirectoryWrapper) directory).setAssertNoUnrefencedFilesOnClose(false);
+        // this test itself deletes files (has no retry mechanism)
+        ((MockDirectoryWrapper) directory).setEnableVirusScanner(false);
       }
 
       IndexWriter writer = new IndexWriter(
           directory,
-          newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).
+          newIndexWriterConfig(new MockAnalyzer(random())).
               setOpenMode(OpenMode.CREATE).
               setMaxBufferedDocs(-1).
               setMergePolicy(newLogMergePolicy(10))
@@ -161,11 +160,13 @@ public class TestDoc extends LuceneTestCase {
         // We create unreferenced files (we don't even write
         // a segments file):
         ((MockDirectoryWrapper) directory).setAssertNoUnrefencedFilesOnClose(false);
+        // this test itself deletes files (has no retry mechanism)
+        ((MockDirectoryWrapper) directory).setEnableVirusScanner(false);
       }
 
       writer = new IndexWriter(
           directory,
-          newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).
+          newIndexWriterConfig(new MockAnalyzer(random())).
               setOpenMode(OpenMode.CREATE).
               setMaxBufferedDocs(-1).
               setMergePolicy(newLogMergePolicy(10))
@@ -198,9 +199,9 @@ public class TestDoc extends LuceneTestCase {
    private SegmentCommitInfo indexDoc(IndexWriter writer, String fileName)
    throws Exception
    {
-      File file = new File(workDir, fileName);
+      Path path = workDir.resolve(fileName);
       Document doc = new Document();
-      InputStreamReader is = new InputStreamReader(new FileInputStream(file), "UTF-8");
+      InputStreamReader is = new InputStreamReader(Files.newInputStream(path), StandardCharsets.UTF_8);
       doc.add(new TextField("contents", is));
       writer.addDocument(doc);
       writer.commit();
@@ -217,16 +218,16 @@ public class TestDoc extends LuceneTestCase {
 
       final Codec codec = Codec.getDefault();
       TrackingDirectoryWrapper trackingDir = new TrackingDirectoryWrapper(si1.info.dir);
-      final SegmentInfo si = new SegmentInfo(si1.info.dir, Constants.LUCENE_MAIN_VERSION, merged, -1, false, codec, null);
+      final SegmentInfo si = new SegmentInfo(si1.info.dir, Version.LATEST, merged, -1, false, codec, null);
 
       SegmentMerger merger = new SegmentMerger(Arrays.<AtomicReader>asList(r1, r2),
           si, InfoStream.getDefault(), trackingDir,
-          MergeState.CheckAbort.NONE, new FieldInfos.FieldNumbers(), context);
+          MergeState.CheckAbort.NONE, new FieldInfos.FieldNumbers(), context, true);
 
       MergeState mergeState = merger.merge();
       r1.close();
       r2.close();
-      final SegmentInfo info = new SegmentInfo(si1.info.dir, Constants.LUCENE_MAIN_VERSION, merged,
+      final SegmentInfo info = new SegmentInfo(si1.info.dir, Version.LATEST, merged,
                                                si1.info.getDocCount() + si2.info.getDocCount(),
                                                false, codec, null);
       info.setFiles(new HashSet<>(trackingDir.getCreatedFiles()));
@@ -239,7 +240,7 @@ public class TestDoc extends LuceneTestCase {
         }
       }
 
-      return new SegmentCommitInfo(info, 0, -1L, -1L);
+      return new SegmentCommitInfo(info, 0, -1L, -1L, -1L);
    }
 
 

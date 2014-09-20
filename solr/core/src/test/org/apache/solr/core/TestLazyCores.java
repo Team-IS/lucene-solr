@@ -17,6 +17,7 @@ package org.apache.solr.core;
  * limitations under the License.
  */
 
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.codec.Charsets;
 import org.apache.commons.io.FileUtils;
 import org.apache.solr.SolrTestCaseJ4;
@@ -27,13 +28,11 @@ import org.apache.solr.handler.admin.CoreAdminHandler;
 import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.update.AddUpdateCommand;
 import org.apache.solr.update.CommitUpdateCommand;
 import org.apache.solr.update.UpdateHandler;
-import org.apache.solr.util.RefCounted;
 import org.apache.solr.util.TestHarness;
-import org.junit.After;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -54,14 +53,17 @@ public class TestLazyCores extends SolrTestCaseJ4 {
     initCore("solrconfig-minimal.xml", "schema-tiny.xml");
   }
 
-  private final File solrHomeDirectory = new File(TEMP_DIR, TestLazyCores.getSimpleClassName());
+  private File solrHomeDirectory;
+  
+  @Before
+  @Override
+  public void setUp() throws Exception {
+    super.setUp();
+  }
 
   private CoreContainer init() throws Exception {
-
-    if (solrHomeDirectory.exists()) {
-      FileUtils.deleteDirectory(solrHomeDirectory);
-    }
-    assertTrue("Failed to mkdirs workDir", solrHomeDirectory.mkdirs());
+    solrHomeDirectory = createTempDir().toFile();
+    
     for (int idx = 1; idx < 10; ++idx) {
       copyMinConf(new File(solrHomeDirectory, "collection" + idx));
     }
@@ -79,13 +81,7 @@ public class TestLazyCores extends SolrTestCaseJ4 {
     cores.load();
     return cores;
   }
-
-  @After
-  public void after() throws Exception {
-    if (solrHomeDirectory.exists()) {
-      FileUtils.deleteDirectory(solrHomeDirectory);
-    }
-  }
+  
   @Test
   public void testLazyLoad() throws Exception {
     CoreContainer cc = init();
@@ -503,14 +499,10 @@ public class TestLazyCores extends SolrTestCaseJ4 {
 
       // Did we get the expected message for each of the cores that failed to load? Make sure we don't run afoul of
       // the dreaded slash/backslash difference on Windows and *nix machines.
-      testMessage(cc.getCoreInitFailures(),
-          "TestLazyCores" + File.separator + "badConfig1" + File.separator + "solrconfig.xml");
-      testMessage(cc.getCoreInitFailures(),
-          "TestLazyCores" + File.separator + "badConfig2" + File.separator + "solrconfig.xml");
-      testMessage(cc.getCoreInitFailures(),
-          "TestLazyCores" + File.separator + "badSchema1" + File.separator + "schema.xml");
-      testMessage(cc.getCoreInitFailures(),
-          "TestLazyCores" + File.separator + "badSchema2" + File.separator + "schema.xml");
+      testMessage(cc.getCoreInitFailures(), makePath("badConfig1", "conf", "solrconfig.xml"));
+      testMessage(cc.getCoreInitFailures(), makePath("badConfig2", "conf", "solrconfig.xml"));
+      testMessage(cc.getCoreInitFailures(), makePath("badSchema1", "conf", "schema.xml"));
+      testMessage(cc.getCoreInitFailures(), makePath("badSchema2", "conf", "schema.xml"));
 
       // Status should report that there are failure messages for the bad cores and none for the good cores.
       checkStatus(cc, true, "core1");
@@ -559,11 +551,14 @@ public class TestLazyCores extends SolrTestCaseJ4 {
   }
 
   // See fi the message you expect is in the list of failures
-  private void testMessage(Map<String, Exception> failures, String lookFor) {
-    for (Exception e : failures.values()) {
-      if (e.getMessage().indexOf(lookFor) != -1) return;
+  private void testMessage(Map<String, CoreContainer.CoreLoadFailure> failures, String lookFor) {
+    List<String> messages = new ArrayList<>();
+    for (CoreContainer.CoreLoadFailure e : failures.values()) {
+      String message = e.exception.getCause().getMessage();
+      messages.add(message);
+      if (message.contains(lookFor)) return;
     }
-    fail("Should have found message containing these tokens " + lookFor + " in the failure messages");
+    fail("Should have found message containing these tokens " + lookFor + " in the failure messages: " + messages);
   }
 
   // Just localizes writing a configuration rather than repeating it for good and bad files.
@@ -590,15 +585,11 @@ public class TestLazyCores extends SolrTestCaseJ4 {
   private CoreContainer initGoodAndBad(List<String> goodCores,
                                        List<String> badSchemaCores,
                                        List<String> badConfigCores) throws Exception {
-
+    solrHomeDirectory = createTempDir().toFile();
+    
     // Don't pollute the log with exception traces when they're expected.
     ignoreException(Pattern.quote("SAXParseException"));
-
-    if (solrHomeDirectory.exists()) {
-      FileUtils.deleteDirectory(solrHomeDirectory);
-    }
-    assertTrue("Failed to mkdirs workDir", solrHomeDirectory.mkdirs());
-
+    
     // Create the cores that should be fine.
     for (String coreName : goodCores) {
       File coreRoot = new File(solrHomeDirectory, coreName);
@@ -679,8 +670,7 @@ public class TestLazyCores extends SolrTestCaseJ4 {
   }
 
   private void removeOne(CoreContainer cc, String coreName) {
-    SolrCore tmp = cc.remove(coreName);
-    if (tmp != null) tmp.close();
+    cc.unload(coreName);
   }
   public static void checkNotInCores(CoreContainer cc, String... nameCheck) {
     Collection<String> names = cc.getCoreNames();
@@ -716,6 +706,10 @@ public class TestLazyCores extends SolrTestCaseJ4 {
       entries[i / 2] = new NamedList.NamedListEntry<>(q[i], q[i + 1]);
     }
     return new LocalSolrQueryRequest(core, new NamedList<>(entries));
+  }
+
+  private static final String makePath(String... args) {
+    return StringUtils.join(args, File.separator);
   }
 
   private final static String LOTS_SOLR_XML = " <solr persistent=\"false\"> " +

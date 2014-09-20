@@ -18,7 +18,6 @@ package org.apache.solr.update;
  */
 
 import com.google.common.collect.Lists;
-import org.apache.commons.io.FileUtils;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
@@ -39,6 +38,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
@@ -56,27 +56,9 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
     super.setUp();
     clearIndex();
     assertU(commit());
-    indexDir1 = new File(TEMP_DIR, this.getClass().getName()
-        + "_testSplit1");
-    indexDir2 = new File(TEMP_DIR, this.getClass().getName()
-        + "_testSplit2");
-    indexDir3 = new File(TEMP_DIR, this.getClass().getName()
-        + "_testSplit3");
-
-    if (indexDir1.exists()) {
-      FileUtils.deleteDirectory(indexDir1);
-    }
-    assertTrue("Failed to mkdirs indexDir1 for split index", indexDir1.mkdirs());
-
-    if (indexDir2.exists()) {
-      FileUtils.deleteDirectory(indexDir2);
-    }
-    assertTrue("Failed to mkdirs indexDir2 for split index", indexDir2.mkdirs());
-
-    if (indexDir3.exists()) {
-      FileUtils.deleteDirectory(indexDir3);
-    }
-    assertTrue("Failed to mkdirs indexDir3 for split index", indexDir3.mkdirs());
+    indexDir1 = createTempDir("_testSplit1").toFile();
+    indexDir2 = createTempDir("_testSplit2").toFile();
+    indexDir3 = createTempDir("_testSplit3").toFile();
   }
 
   @Test
@@ -181,19 +163,11 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
 
       CoreDescriptor dcore1 = buildCoreDescriptor(h.getCoreContainer(), "split1", instanceDir)
           .withDataDir(indexDir1.getAbsolutePath()).withSchema("schema12.xml").build();
-      if (h.getCoreContainer().getZkController() != null) {
-        h.getCoreContainer().preRegisterInZk(dcore1);
-      }
       core1 = h.getCoreContainer().create(dcore1);
-      h.getCoreContainer().register(core1, false);
 
       CoreDescriptor dcore2 = buildCoreDescriptor(h.getCoreContainer(), "split2", instanceDir)
           .withDataDir(indexDir2.getAbsolutePath()).withSchema("schema12.xml").build();
-      if (h.getCoreContainer().getZkController() != null) {
-        h.getCoreContainer().preRegisterInZk(dcore2);
-      }
       core2 = h.getCoreContainer().create(dcore2);
-      h.getCoreContainer().register(core2, false);
 
       LocalSolrQueryRequest request = null;
       try {
@@ -213,10 +187,8 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
       assertEquals("id:dorothy should not be present in split index2", 0, server2.query(new SolrQuery("id:dorothy")).getResults().getNumFound());
       assertEquals("id:kansas should be present in split index2", 1, server2.query(new SolrQuery("id:kansas")).getResults().getNumFound());
     } finally {
-      h.getCoreContainer().remove("split2");
-      h.getCoreContainer().remove("split1");
-      if (core2 != null) core2.close();
-      if (core1 != null) core1.close();
+      h.getCoreContainer().unload("split2");
+      h.getCoreContainer().unload("split1");
     }
   }
 
@@ -269,11 +241,7 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
 
   @Test
   public void testSplitByRouteKey() throws Exception  {
-    File indexDir = new File(TEMP_DIR, this.getClass().getName() + "testSplitByRouteKey");
-    if (indexDir.exists())  {
-      FileUtils.deleteDirectory(indexDir);
-    }
-    indexDir.mkdirs();
+    File indexDir = createTempDir().toFile();
 
     CompositeIdRouter r1 = new CompositeIdRouter();
     String splitKey = "sea-line!";
@@ -326,9 +294,9 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
 
   private List<DocRouter.Range> getRanges(String id1, String id2) throws UnsupportedEncodingException {
     // find minHash/maxHash hash ranges
-    byte[] bytes = id1.getBytes("UTF-8");
+    byte[] bytes = id1.getBytes(StandardCharsets.UTF_8);
     int minHash = Hash.murmurhash3_x86_32(bytes, 0, bytes.length, 0);
-    bytes = id2.getBytes("UTF-8");
+    bytes = id2.getBytes(StandardCharsets.UTF_8);
     int maxHash = Hash.murmurhash3_x86_32(bytes, 0, bytes.length, 0);
 
     if (minHash > maxHash)  {

@@ -18,9 +18,7 @@ package org.apache.lucene.codecs.blockterms;
  */
 
 import java.io.IOException;
-import java.io.FileOutputStream;   // for toDot
-import java.io.OutputStreamWriter; // for toDot
-import java.io.Writer;             // for toDot
+import java.util.Collections;
 import java.util.HashMap;
 
 import org.apache.lucene.codecs.CodecUtil;
@@ -31,12 +29,13 @@ import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.fst.BytesRefFSTEnum;
 import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.PositiveIntOutputs;
-import org.apache.lucene.util.fst.Util; // for toDot
 
 /** See {@link VariableGapTermsIndexWriter}
  * 
@@ -45,7 +44,7 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
 
   private final PositiveIntOutputs fstOutputs = PositiveIntOutputs.getSingleton();
 
-  final HashMap<FieldInfo,FieldIndexData> fields = new HashMap<>();
+  final HashMap<String,FieldIndexData> fields = new HashMap<>();
   
   // start of the field info data
   private long dirOffset;
@@ -62,22 +61,26 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
     try {
       
       version = readHeader(in);
+      
+      if (version >= VariableGapTermsIndexWriter.VERSION_CHECKSUM) {
+        CodecUtil.checksumEntireFile(in);
+      }
 
       seekDir(in, dirOffset);
 
       // Read directory
       final int numFields = in.readVInt();
       if (numFields < 0) {
-        throw new CorruptIndexException("invalid numFields: " + numFields + " (resource=" + in + ")");
+        throw new CorruptIndexException("invalid numFields: " + numFields, in);
       }
 
       for(int i=0;i<numFields;i++) {
         final int field = in.readVInt();
         final long indexStart = in.readVLong();
         final FieldInfo fieldInfo = fieldInfos.fieldInfo(field);
-        FieldIndexData previous = fields.put(fieldInfo, new FieldIndexData(in, fieldInfo, indexStart));
+        FieldIndexData previous = fields.put(fieldInfo.name, new FieldIndexData(in, fieldInfo, indexStart));
         if (previous != null) {
-          throw new CorruptIndexException("duplicate field: " + fieldInfo.name + " (resource=" + in + ")");
+          throw new CorruptIndexException("duplicate field: " + fieldInfo.name, in);
         }
       }
       success = true;
@@ -152,7 +155,7 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
     return false;
   }
 
-  private final class FieldIndexData {
+  private final class FieldIndexData implements Accountable {
     private final FST<Long> fst;
 
     public FieldIndexData(IndexInput in, FieldInfo fieldInfo, long indexStart) throws IOException {
@@ -170,15 +173,29 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
       */
     }
 
-    /** Returns approximate RAM bytes used */
+    @Override
     public long ramBytesUsed() {
-      return fst == null ? 0 : fst.sizeInBytes();
+      return fst == null ? 0 : fst.ramBytesUsed();
+    }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      if (fst == null) {
+        return Collections.emptyList();
+      } else {
+        return Collections.singletonList(Accountables.namedAccountable("index data", fst));
+      }
+    }
+    
+    @Override
+    public String toString() {
+      return "VarGapTermIndex";
     }
   }
 
   @Override
   public FieldIndexEnum getFieldEnum(FieldInfo fieldInfo) {
-    final FieldIndexData fieldData = fields.get(fieldInfo);
+    final FieldIndexData fieldData = fields.get(fieldInfo.name);
     if (fieldData.fst == null) {
       return null;
     } else {
@@ -190,7 +207,10 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
   public void close() throws IOException {}
 
   private void seekDir(IndexInput input, long dirOffset) throws IOException {
-    if (version >= VariableGapTermsIndexWriter.VERSION_APPEND_ONLY) {
+    if (version >= VariableGapTermsIndexWriter.VERSION_CHECKSUM) {
+      input.seek(input.length() - CodecUtil.footerLength() - 8);
+      dirOffset = input.readLong();
+    } else if (version >= VariableGapTermsIndexWriter.VERSION_APPEND_ONLY) {
       input.seek(input.length() - 8);
       dirOffset = input.readLong();
     }
@@ -204,5 +224,15 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
       sizeInBytes += entry.ramBytesUsed();
     }
     return sizeInBytes;
+  }
+
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Accountables.namedAccountables("field", fields);
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(fields=" + fields.size() + ")";
   }
 }

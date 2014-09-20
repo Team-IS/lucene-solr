@@ -18,6 +18,8 @@ package org.apache.lucene.store;
  */
 
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.NoSuchFileException;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -81,32 +83,32 @@ public class FileSwitchDirectory extends BaseDirectory {
     // LUCENE-3380: either or both of our dirs could be FSDirs,
     // but if one underlying delegate is an FSDir and mkdirs() has not
     // yet been called, because so far everything is written to the other,
-    // in this case, we don't want to throw a NoSuchDirectoryException
-    NoSuchDirectoryException exc = null;
+    // in this case, we don't want to throw a NoSuchFileException
+    NoSuchFileException exc = null;
     try {
       for(String f : primaryDir.listAll()) {
         files.add(f);
       }
-    } catch (NoSuchDirectoryException e) {
+    } catch (NoSuchFileException e) {
       exc = e;
     }
     try {
       for(String f : secondaryDir.listAll()) {
         files.add(f);
       }
-    } catch (NoSuchDirectoryException e) {
-      // we got NoSuchDirectoryException from both dirs
+    } catch (NoSuchFileException e) {
+      // we got NoSuchFileException from both dirs
       // rethrow the first.
       if (exc != null) {
         throw exc;
       }
-      // we got NoSuchDirectoryException from the secondary,
+      // we got NoSuchFileException from the secondary,
       // and the primary is empty.
       if (files.isEmpty()) {
         throw e;
       }
     }
-    // we got NoSuchDirectoryException from the primary,
+    // we got NoSuchFileException from the primary,
     // and the secondary is empty.
     if (exc != null && files.isEmpty()) {
       throw exc;
@@ -130,11 +132,6 @@ public class FileSwitchDirectory extends BaseDirectory {
     } else {
       return secondaryDir;
     }
-  }
-
-  @Override
-  public boolean fileExists(String name) throws IOException {
-    return getDirectory(name).fileExists(name);
   }
 
   @Override
@@ -168,13 +165,18 @@ public class FileSwitchDirectory extends BaseDirectory {
   }
 
   @Override
-  public IndexInput openInput(String name, IOContext context) throws IOException {
-    return getDirectory(name).openInput(name, context);
+  public void renameFile(String source, String dest) throws IOException {
+    Directory sourceDir = getDirectory(source);
+    // won't happen with standard lucene index files since pending and commit will
+    // always have the same extension ("")
+    if (sourceDir != getDirectory(dest)) {
+      throw new AtomicMoveNotSupportedException(source, dest, "source and dest are in different directories");
+    }
+    sourceDir.renameFile(source, dest);
   }
 
   @Override
-  public IndexInputSlicer createSlicer(String name, IOContext context)
-      throws IOException {
-    return getDirectory(name).createSlicer(name, context);
+  public IndexInput openInput(String name, IOContext context) throws IOException {
+    return getDirectory(name).openInput(name, context);
   }
 }

@@ -17,7 +17,6 @@
 
 package org.apache.solr.cloud.hdfs;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -60,9 +59,7 @@ public class HdfsWriteToMultipleCollectionsTest extends BasicDistributedZkTest {
   @BeforeClass
   public static void setupClass() throws Exception {
     schemaString = "schema15.xml";      // we need a string id
-    dfsCluster = HdfsTestUtil.setupClass(new File(TEMP_DIR,
-        HdfsBasicDistributedZk2Test.class.getName() + "_"
-            + System.currentTimeMillis()).getAbsolutePath());
+    dfsCluster = HdfsTestUtil.setupClass(createTempDir().toFile().getAbsolutePath());
     System.setProperty(SOLR_HDFS_HOME, dfsCluster.getURI().toString() + "/solr");
   }
   
@@ -146,7 +143,8 @@ public class HdfsWriteToMultipleCollectionsTest extends BasicDistributedZkTest {
             BlockDirectory blockDirectory = (BlockDirectory) directory
                 .getDelegate();
             assertTrue(blockDirectory.isBlockCacheReadEnabled());
-            assertTrue(blockDirectory.isBlockCacheWriteEnabled());
+            // see SOLR-6424
+            assertFalse(blockDirectory.isBlockCacheWriteEnabled());
             Cache cache = blockDirectory.getCache();
             // we know its a BlockDirectoryCache, but future proof
             assertTrue(cache instanceof BlockDirectoryCache);

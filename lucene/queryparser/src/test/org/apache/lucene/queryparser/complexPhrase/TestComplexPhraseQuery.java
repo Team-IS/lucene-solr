@@ -27,7 +27,6 @@ import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.StoredDocument;
-import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
@@ -87,7 +86,7 @@ public class TestComplexPhraseQuery extends LuceneTestCase {
   }
 
   private void checkBadQuery(String qString) {
-    ComplexPhraseQueryParser qp = new ComplexPhraseQueryParser(TEST_VERSION_CURRENT, defaultFieldName, analyzer);
+    ComplexPhraseQueryParser qp = new ComplexPhraseQueryParser(defaultFieldName, analyzer);
     qp.setInOrder(inOrder);
     Throwable expected = null;
     try {
@@ -101,7 +100,7 @@ public class TestComplexPhraseQuery extends LuceneTestCase {
 
   private void checkMatches(String qString, String expectedVals)
       throws Exception {
-    ComplexPhraseQueryParser qp = new ComplexPhraseQueryParser(TEST_VERSION_CURRENT, defaultFieldName, analyzer);
+    ComplexPhraseQueryParser qp = new ComplexPhraseQueryParser(defaultFieldName, analyzer);
     qp.setInOrder(inOrder);
     qp.setFuzzyPrefixLength(1); // usually a good idea
 
@@ -139,6 +138,31 @@ public class TestComplexPhraseQuery extends LuceneTestCase {
     checkMatches("+role:developer +name:jack*", "");
     checkMatches("name:\"john smith\"~2 AND role:designer AND id:3", "3");
   }
+
+  public void testHashcodeEquals() throws Exception {
+    ComplexPhraseQueryParser qp = new ComplexPhraseQueryParser(defaultFieldName, analyzer);
+    qp.setInOrder(true);
+    qp.setFuzzyPrefixLength(1);
+
+    String qString = "\"aaa* bbb*\"";
+
+    Query q = qp.parse(qString);
+    Query q2 = qp.parse(qString);
+
+    assertEquals(q.hashCode(), q2.hashCode());
+    assertEquals(q, q2);
+
+    qp.setInOrder(false); // SOLR-6011
+
+    q2 = qp.parse(qString);
+
+    // although the general contract of hashCode can't guarantee different values, if we only change one thing
+    // about a single query, it normally should result in a different value (and will with the current
+    // implementation in ComplexPhraseQuery)
+    assertTrue(q.hashCode() != q2.hashCode());
+    assertTrue(!q.equals(q2));
+    assertTrue(!q2.equals(q));
+  }
   
   @Override
   public void setUp() throws Exception {
@@ -146,7 +170,7 @@ public class TestComplexPhraseQuery extends LuceneTestCase {
     
     analyzer = new MockAnalyzer(random());
     rd = newDirectory();
-    IndexWriter w = new IndexWriter(rd, newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer));
+    IndexWriter w = new IndexWriter(rd, newIndexWriterConfig(analyzer));
     for (int i = 0; i < docsContent.length; i++) {
       Document doc = new Document();
       doc.add(newTextField("name", docsContent[i].name, Field.Store.YES));

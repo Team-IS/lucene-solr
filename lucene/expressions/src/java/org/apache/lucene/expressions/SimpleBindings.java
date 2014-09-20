@@ -25,10 +25,6 @@ import org.apache.lucene.queries.function.valuesource.DoubleFieldSource;
 import org.apache.lucene.queries.function.valuesource.FloatFieldSource;
 import org.apache.lucene.queries.function.valuesource.IntFieldSource;
 import org.apache.lucene.queries.function.valuesource.LongFieldSource;
-import org.apache.lucene.search.FieldCache.DoubleParser;
-import org.apache.lucene.search.FieldCache.FloatParser;
-import org.apache.lucene.search.FieldCache.IntParser;
-import org.apache.lucene.search.FieldCache.LongParser;
 import org.apache.lucene.search.SortField;
 
 /**
@@ -66,6 +62,11 @@ public final class SimpleBindings extends Bindings {
   public void add(SortField sortField) {
     map.put(sortField.getField(), sortField);
   }
+
+  /**
+   * Bind a {@link ValueSource} directly to the given name.
+   */
+  public void add(String name, ValueSource source) { map.put(name, source); }
   
   /** 
    * Adds an Expression to the bindings.
@@ -83,17 +84,19 @@ public final class SimpleBindings extends Bindings {
       throw new IllegalArgumentException("Invalid reference '" + name + "'");
     } else if (o instanceof Expression) {
       return ((Expression)o).getValueSource(this);
+    } else if (o instanceof ValueSource) {
+      return ((ValueSource)o);
     }
     SortField field = (SortField) o;
     switch(field.getType()) {
       case INT:
-        return new IntFieldSource(field.getField(), (IntParser) field.getParser());
+        return new IntFieldSource(field.getField());
       case LONG:
-        return new LongFieldSource(field.getField(), (LongParser) field.getParser());
+        return new LongFieldSource(field.getField());
       case FLOAT:
-        return new FloatFieldSource(field.getField(), (FloatParser) field.getParser());
+        return new FloatFieldSource(field.getField());
       case DOUBLE:
-        return new DoubleFieldSource(field.getField(), (DoubleParser) field.getParser());
+        return new DoubleFieldSource(field.getField());
       case SCORE:
         return getScoreValueSource();
       default:

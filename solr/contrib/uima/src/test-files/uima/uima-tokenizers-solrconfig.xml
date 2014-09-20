@@ -24,12 +24,12 @@
     https://issues.apache.org/jira/browse/SOLR-1167
   -->
 <config xmlns:xi="http://www.w3.org/2001/XInclude">
-  <luceneMatchVersion>${tests.luceneMatchVersion:LUCENE_CURRENT}</luceneMatchVersion>
+  <luceneMatchVersion>${tests.luceneMatchVersion:LATEST}</luceneMatchVersion>
   <indexConfig>
     <useCompoundFile>${useCompoundFile:false}</useCompoundFile>
   </indexConfig>
   <!--
-    lib directives can be used to instruct Solr to load an Jars
+    lib directives can be used to instruct Solr to load any Jars
     identified and use them to resolve any "plugins" specified in your
     solrconfig.xml or schema.xml (ie: Analyzers, Request Handlers,
     etc...). All directories and paths are resolved relative the

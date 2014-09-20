@@ -22,7 +22,7 @@
    configurations.
   -->
 <config>
-  <luceneMatchVersion>${tests.luceneMatchVersion:LUCENE_CURRENT}</luceneMatchVersion>
+  <luceneMatchVersion>${tests.luceneMatchVersion:LATEST}</luceneMatchVersion>
   <requestHandler name="standard" class="solr.StandardRequestHandler"></requestHandler>
   <directoryFactory name="DirectoryFactory" class="${solr.directoryFactory:solr.RAMDirectoryFactory}"/>
 
@@ -48,7 +48,6 @@
 
   <updateRequestProcessorChain name="parse-date-explicit-typeclass-selector-no-run-processor">
     <processor class="solr.ParseDateFieldUpdateProcessorFactory">
-      <str name="typeClass">solr.DateField</str>
       <str name="typeClass">solr.TrieDateField</str>
       <str name="format">yyyy-MM-dd'T'HH:mm:ss.SSSZ</str>
     </processor>

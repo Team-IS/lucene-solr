@@ -17,15 +17,17 @@ package org.apache.lucene.analysis.hunspell;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.InputStream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import org.apache.lucene.analysis.hunspell.Dictionary;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.LuceneTestCase.SuppressSysoutChecks;
+import org.apache.lucene.util.RamUsageTester;
+import org.apache.lucene.util.TestUtil;
 import org.junit.Ignore;
 
 /**
@@ -34,11 +36,12 @@ import org.junit.Ignore;
  * Note some of the files differ only in case. This may be a problem on your operating system!
  */
 @Ignore("enable manually")
+@SuppressSysoutChecks(bugUrl = "prints important memory utilization stats per dictionary")
 public class TestAllDictionaries extends LuceneTestCase {
   
   // set this to the location of where you downloaded all the files
-  static final File DICTIONARY_HOME = 
-      new File("/data/archive.services.openoffice.org/pub/mirror/OpenOffice.org/contrib/dictionaries");
+  static final Path DICTIONARY_HOME = 
+      Paths.get("/data/archive.services.openoffice.org/pub/mirror/OpenOffice.org/contrib/dictionaries");
   
   final String tests[] = {
     /* zip file */               /* dictionary */       /* affix */
@@ -153,49 +156,57 @@ public class TestAllDictionaries extends LuceneTestCase {
   };
   
   public void test() throws Exception {
+    Path tmp = LuceneTestCase.createTempDir();
+    
     for (int i = 0; i < tests.length; i += 3) {
-      File f = new File(DICTIONARY_HOME, tests[i]);
-      assert f.exists();
+      Path f = DICTIONARY_HOME.resolve(tests[i]);
+      assert Files.exists(f);
       
-      try (ZipFile zip = new ZipFile(f, IOUtils.CHARSET_UTF_8)) {
-        ZipEntry dicEntry = zip.getEntry(tests[i+1]);
-        assert dicEntry != null;
-        ZipEntry affEntry = zip.getEntry(tests[i+2]);
-        assert affEntry != null;
+      IOUtils.rm(tmp);
+      Files.createDirectory(tmp);
       
-        try (InputStream dictionary = zip.getInputStream(dicEntry);
-             InputStream affix = zip.getInputStream(affEntry)) {
+      try (InputStream in = Files.newInputStream(f)) {
+        TestUtil.unzip(in, tmp);
+        Path dicEntry = tmp.resolve(tests[i+1]);
+        Path affEntry = tmp.resolve(tests[i+2]);
+      
+        try (InputStream dictionary = Files.newInputStream(dicEntry);
+             InputStream affix = Files.newInputStream(affEntry)) {
           Dictionary dic = new Dictionary(affix, dictionary);
-          System.out.println(tests[i] + "\t" + RamUsageEstimator.humanSizeOf(dic) + "\t(" +
-                             "words=" + RamUsageEstimator.humanSizeOf(dic.words) + ", " +
-                             "flags=" + RamUsageEstimator.humanSizeOf(dic.flagLookup) + ", " +
-                             "strips=" + RamUsageEstimator.humanSizeOf(dic.stripData) + ", " +
-                             "conditions=" + RamUsageEstimator.humanSizeOf(dic.patterns) + ", " +
-                             "affixData=" + RamUsageEstimator.humanSizeOf(dic.affixData) + ", " +
-                             "prefixes=" + RamUsageEstimator.humanSizeOf(dic.prefixes) + ", " +
-                             "suffixes=" + RamUsageEstimator.humanSizeOf(dic.suffixes) + ")");
+          System.out.println(tests[i] + "\t" + RamUsageTester.humanSizeOf(dic) + "\t(" +
+                             "words=" + RamUsageTester.humanSizeOf(dic.words) + ", " +
+                             "flags=" + RamUsageTester.humanSizeOf(dic.flagLookup) + ", " +
+                             "strips=" + RamUsageTester.humanSizeOf(dic.stripData) + ", " +
+                             "conditions=" + RamUsageTester.humanSizeOf(dic.patterns) + ", " +
+                             "affixData=" + RamUsageTester.humanSizeOf(dic.affixData) + ", " +
+                             "prefixes=" + RamUsageTester.humanSizeOf(dic.prefixes) + ", " +
+                             "suffixes=" + RamUsageTester.humanSizeOf(dic.suffixes) + ")");
         }
       }
     }
   }
   
   public void testOneDictionary() throws Exception {
-    String toTest = "hu_HU.zip";
+    Path tmp = LuceneTestCase.createTempDir();
+
+    String toTest = "zu_ZA.zip";
     for (int i = 0; i < tests.length; i++) {
       if (tests[i].equals(toTest)) {
-        File f = new File(DICTIONARY_HOME, tests[i]);
-        assert f.exists();
+        Path f = DICTIONARY_HOME.resolve(tests[i]);
+        assert Files.exists(f);
         
-        try (ZipFile zip = new ZipFile(f, IOUtils.CHARSET_UTF_8)) {
-          ZipEntry dicEntry = zip.getEntry(tests[i+1]);
-          assert dicEntry != null;
-          ZipEntry affEntry = zip.getEntry(tests[i+2]);
-          assert affEntry != null;
+        IOUtils.rm(tmp);
+        Files.createDirectory(tmp);
         
-          try (InputStream dictionary = zip.getInputStream(dicEntry);
-               InputStream affix = zip.getInputStream(affEntry)) {
-              new Dictionary(affix, dictionary);
-          }
+        try (InputStream in = Files.newInputStream(f)) {
+          TestUtil.unzip(in, tmp);
+          Path dicEntry = tmp.resolve(tests[i+1]);
+          Path affEntry = tmp.resolve(tests[i+2]);
+        
+          try (InputStream dictionary = Files.newInputStream(dicEntry);
+              InputStream affix = Files.newInputStream(affEntry)) {
+            new Dictionary(affix, dictionary);
+          } 
         }
       }
     }    

@@ -26,16 +26,15 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.util.CharFilterFactory;
 import org.apache.lucene.analysis.util.TokenFilterFactory;
 import org.apache.lucene.analysis.util.TokenizerFactory;
-import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.*;
 import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.PriorityQueue;
 import org.apache.lucene.util.UnicodeUtil;
 import org.apache.solr.analysis.TokenizerChain;
@@ -251,7 +250,7 @@ public class LukeRequestHandler extends RequestHandlerBase
   private static SimpleOrderedMap<Object> getDocumentFieldsInfo( StoredDocument doc, int docId, IndexReader reader,
                                                                  IndexSchema schema ) throws IOException
   {
-    final CharsRef spare = new CharsRef();
+    final CharsRefBuilder spare = new CharsRefBuilder();
     SimpleOrderedMap<Object> finfo = new SimpleOrderedMap<>();
     for( Object o : doc.getFields() ) {
       Field field = (Field)o;
@@ -288,7 +287,7 @@ public class LukeRequestHandler extends RequestHandlerBase
             BytesRef text;
             while((text = termsEnum.next()) != null) {
               final int freq = (int) termsEnum.totalTermFreq();
-              UnicodeUtil.UTF8toUTF16(text, spare);
+              spare.copyUTF8Bytes(text);
               tfv.add(spare.toString(), freq);
             }
             f.add( "termVector", tfv );
@@ -426,7 +425,7 @@ public class LukeRequestHandler extends RequestHandlerBase
       field.add("fields", typeusemap.get( ft.getTypeName() ) );
       field.add("tokenized", ft.isTokenized() );
       field.add("className", ft.getClass().getName());
-      field.add("indexAnalyzer", getAnalyzerInfo(ft.getAnalyzer()));
+      field.add("indexAnalyzer", getAnalyzerInfo(ft.getIndexAnalyzer()));
       field.add("queryAnalyzer", getAnalyzerInfo(ft.getQueryAnalyzer()));
       field.add("similarity", getSimilarityInfo(ft.getSimilarity()));
       types.add( ft.getTypeName(), field );
@@ -521,8 +520,8 @@ public class LukeRequestHandler extends RequestHandlerBase
     if (f == uniqueField){
       field.add("uniqueKey", true);
     }
-    if (ft.getAnalyzer().getPositionIncrementGap(f.getName()) != 0) {
-      field.add("positionIncrementGap", ft.getAnalyzer().getPositionIncrementGap(f.getName()));
+    if (ft.getIndexAnalyzer().getPositionIncrementGap(f.getName()) != 0) {
+      field.add("positionIncrementGap", ft.getIndexAnalyzer().getPositionIncrementGap(f.getName()));
     }
     field.add("copyDests", toListOfStringDests(schema.getCopyFieldsList(f.getName())));
     field.add("copySources", schema.getCopySources(f.getName()));
@@ -596,7 +595,7 @@ public class LukeRequestHandler extends RequestHandlerBase
 
     TopTermQueue tiq = new TopTermQueue(numTerms + 1);  // Something to collect the top N terms in.
 
-    final CharsRef spare = new CharsRef();
+    final CharsRefBuilder spare = new CharsRefBuilder();
 
     Fields fields = MultiFields.getFields(req.getSearcher().getIndexReader());
 
@@ -617,7 +616,7 @@ public class LukeRequestHandler extends RequestHandlerBase
       int slot = 32 - Integer.numberOfLeadingZeros(Math.max(0, freq - 1));
       buckets[slot] = buckets[slot] + 1;
       if (numTerms > 0 && freq > tiq.minFreq) {
-        UnicodeUtil.UTF8toUTF16(text, spare);
+        spare.copyUTF8Bytes(text);
         String t = spare.toString();
 
         tiq.add(new TopTermQueue.TermInfo(new Term(field, t), termsEnum.docFreq()));
@@ -657,11 +656,6 @@ public class LukeRequestHandler extends RequestHandlerBase
   @Override
   public String getDescription() {
     return "Lucene Index Browser.  Inspired and modeled after Luke: http://www.getopt.org/luke/";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
   }
 
   @Override

@@ -20,6 +20,7 @@ package org.apache.lucene.search;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.index.*;
 import org.apache.lucene.search.FieldValueHitQueue.Entry;
 import org.apache.lucene.search.similarities.DefaultSimilarity;
@@ -39,7 +40,7 @@ public class TestElevationComparator extends LuceneTestCase {
     Directory directory = newDirectory();
     IndexWriter writer = new IndexWriter(
         directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).
+        newIndexWriterConfig(new MockAnalyzer(random())).
             setMaxBufferedDocs(2).
             setMergePolicy(newLogMergePolicy(1000)).
             setSimilarity(new DefaultSimilarity())
@@ -126,6 +127,9 @@ public class TestElevationComparator extends LuceneTestCase {
    Document doc = new Document();
    for (int i = 0; i < vals.length - 2; i += 2) {
      doc.add(newTextField(vals[i], vals[i + 1], Field.Store.YES));
+     if (vals[i].equals("id")) {
+       doc.add(new SortedDocValuesField(vals[i], new BytesRef(vals[i+1])));
+     }
    }
    return doc;
  }
@@ -144,7 +148,6 @@ class ElevationComparatorSource extends FieldComparatorSource {
 
      SortedDocValues idIndex;
      private final int[] values = new int[numHits];
-     private final BytesRef tempBR = new BytesRef();
      int bottomVal;
 
      @Override
@@ -167,8 +170,8 @@ class ElevationComparatorSource extends FieldComparatorSource {
        if (ord == -1) {
          return 0;
        } else {
-         idIndex.lookupOrd(ord, tempBR);
-         Integer prio = priority.get(tempBR);
+         final BytesRef term = idIndex.lookupOrd(ord);
+         Integer prio = priority.get(term);
          return prio == null ? 0 : prio.intValue();
        }
      }
@@ -185,7 +188,7 @@ class ElevationComparatorSource extends FieldComparatorSource {
 
      @Override
      public FieldComparator<Integer> setNextReader(AtomicReaderContext context) throws IOException {
-       idIndex = FieldCache.DEFAULT.getTermsIndex(context.reader(), fieldname);
+       idIndex = DocValues.getSorted(context.reader(), fieldname);
        return this;
      }
 

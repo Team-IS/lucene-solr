@@ -35,12 +35,11 @@ import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.search.Collector;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.search.TopDocs;
-
 import org.apache.lucene.search.spans.SpanNearQuery;
 import org.apache.lucene.search.spans.SpanQuery;
 import org.apache.lucene.search.spans.SpanTermQuery;
@@ -54,7 +53,7 @@ public class HighlighterPhraseTest extends LuceneTestCase {
     final String TEXT = "the fox jumped";
     final Directory directory = newDirectory();
     final IndexWriter indexWriter = new IndexWriter(directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+        newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
     try {
       final Document document = new Document();
       FieldType customType = new FieldType(TextField.TYPE_NOT_STORED);
@@ -95,7 +94,7 @@ public class HighlighterPhraseTest extends LuceneTestCase {
     final String TEXT = "the fox jumped";
     final Directory directory = newDirectory();
     final IndexWriter indexWriter = new IndexWriter(directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+        newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
     try {
       final Document document = new Document();
 
@@ -116,7 +115,7 @@ public class HighlighterPhraseTest extends LuceneTestCase {
           new SpanTermQuery(new Term(FIELD, "fox")),
           new SpanTermQuery(new Term(FIELD, "jumped")) }, 0, true);
       final FixedBitSet bitset = new FixedBitSet(indexReader.maxDoc());
-      indexSearcher.search(phraseQuery, new Collector() {
+      indexSearcher.search(phraseQuery, new SimpleCollector() {
         private int baseDoc;
 
         @Override
@@ -130,7 +129,7 @@ public class HighlighterPhraseTest extends LuceneTestCase {
         }
 
         @Override
-        public void setNextReader(AtomicReaderContext context) {
+        protected void doSetNextReader(AtomicReaderContext context) throws IOException {
           this.baseDoc = context.docBase;
         }
 
@@ -163,7 +162,7 @@ public class HighlighterPhraseTest extends LuceneTestCase {
     final String TEXT = "the fox did not jump";
     final Directory directory = newDirectory();
     final IndexWriter indexWriter = new IndexWriter(directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+        newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
     try {
       final Document document = new Document();
 
@@ -205,7 +204,7 @@ public class HighlighterPhraseTest extends LuceneTestCase {
     final String TEXT = "the fox did not jump";
     final Directory directory = newDirectory();
     final IndexWriter indexWriter = new IndexWriter(directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+        newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
     try {
       final Document document = new Document();
 
@@ -244,7 +243,7 @@ public class HighlighterPhraseTest extends LuceneTestCase {
     final String TEXT = "the fox did not jump";
     final Directory directory = newDirectory();
     final IndexWriter indexWriter = new IndexWriter(directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+        newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
     try {
       final Document document = new Document();
       FieldType customType = new FieldType(TextField.TYPE_NOT_STORED);
@@ -313,10 +312,10 @@ public class HighlighterPhraseTest extends LuceneTestCase {
     public void reset() {
       this.i = -1;
       this.tokens = new Token[] {
-          new Token(new char[] { 't', 'h', 'e' }, 0, 3, 0, 3),
-          new Token(new char[] { 'f', 'o', 'x' }, 0, 3, 4, 7),
-          new Token(new char[] { 'd', 'i', 'd' }, 0, 3, 8, 11),
-          new Token(new char[] { 'j', 'u', 'm', 'p' }, 0, 4, 16, 20) };
+          new Token("the", 0, 3),
+          new Token("fox", 4, 7),
+          new Token("did", 8, 11),
+          new Token("jump", 16, 20) };
       this.tokens[3].setPositionIncrement(2);
     }
   }
@@ -353,10 +352,10 @@ public class HighlighterPhraseTest extends LuceneTestCase {
     public void reset() {
       this.i = -1;
       this.tokens = new Token[] {
-          new Token(new char[] { 't', 'h', 'e' }, 0, 3, 0, 3),
-          new Token(new char[] { 'f', 'o', 'x' }, 0, 3, 4, 7),
-          new Token(new char[] { 'j', 'u', 'm', 'p' }, 0, 4, 8, 14),
-          new Token(new char[] { 'j', 'u', 'm', 'p', 'e', 'd' }, 0, 6, 8, 14) };
+          new Token("the", 0, 3),
+          new Token("fox", 4, 7),
+          new Token("jump", 8, 14),
+          new Token("jumped", 8, 14) };
       this.tokens[3].setPositionIncrement(0);
     }
   }

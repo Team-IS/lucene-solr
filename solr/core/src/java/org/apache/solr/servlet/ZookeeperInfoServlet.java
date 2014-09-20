@@ -18,12 +18,15 @@
 package org.apache.solr.servlet;
 
 import java.io.IOException;
-import java.io.BufferedWriter;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
@@ -31,19 +34,21 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.IOUtils;
-import org.noggit.CharArr;
-import org.noggit.JSONWriter;
 import org.apache.solr.cloud.ZkController;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.cloud.SolrZkClient;
+import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.util.FastWriter;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.data.Stat;
+import org.noggit.CharArr;
+import org.noggit.JSONWriter;
+import org.noggit.ObjectBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 
 /**
@@ -53,7 +58,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class ZookeeperInfoServlet extends HttpServlet {
   static final Logger log = LoggerFactory.getLogger(ZookeeperInfoServlet.class);
-  
+
   @Override
   public void init() {
   }
@@ -67,7 +72,7 @@ public final class ZookeeperInfoServlet extends HttpServlet {
     if (cores == null) {
       throw new ServletException("Missing request attribute org.apache.solr.CoreContainer.");
     }
-    
+
     final SolrParams params;
     try {
       params = SolrRequestParsers.DEFAULT.parse(null, request.getServletPath(), request).getParams();
@@ -96,18 +101,19 @@ public final class ZookeeperInfoServlet extends HttpServlet {
     response.setCharacterEncoding("UTF-8");
     response.setContentType("application/json");
 
-    Writer out = new FastWriter(new OutputStreamWriter(response.getOutputStream(), IOUtils.CHARSET_UTF_8));
+    Writer out = new FastWriter(new OutputStreamWriter(response.getOutputStream(), StandardCharsets.UTF_8));
 
     ZKPrinter printer = new ZKPrinter(response, out, cores.getZkController(), addr);
     printer.detail = detail;
     printer.dump = dump;
+    printer.isTreeView = (params.get("wt") == null); // this is hacky but tree view requests don't come in with the wt set
 
     try {
       printer.print(path);
     } finally {
       printer.close();
     }
-    
+
     out.flush();
   }
 
@@ -130,6 +136,8 @@ public final class ZookeeperInfoServlet extends HttpServlet {
     boolean fullpath = FULLPATH_DEFAULT;
     boolean detail = false;
     boolean dump = false;
+
+    boolean isTreeView = false;
 
     String addr; // the address passed to us
     String keeperAddr; // the address we're connected to
@@ -360,6 +368,7 @@ public final class ZookeeperInfoServlet extends HttpServlet {
       json.write(v);
     }
 
+    @SuppressWarnings("unchecked")
     boolean printZnode(JSONWriter json, String path) throws IOException {
       try {
         Stat stat = new Stat();
@@ -373,6 +382,47 @@ public final class ZookeeperInfoServlet extends HttpServlet {
             dataStr = (new BytesRef(data)).utf8ToString();
           } catch (Exception e) {
             dataStrErr = "data is not parsable as a utf8 String: " + e.toString();
+          }
+        }
+        // pull in external collections too
+        if (ZkStateReader.CLUSTER_STATE.equals(path) && !isTreeView) {
+          SortedMap<String,Object> collectionStates = null;
+          List<String> children = zkClient.getChildren(ZkStateReader.COLLECTIONS_ZKNODE, null, true);
+          java.util.Collections.sort(children);
+          for (String collection : children) {
+            String collStatePath = ZkStateReader.getCollectionPath(collection);
+            String childDataStr = null;
+            try {
+              byte[] childData = zkClient.getData(collStatePath, null, null, true);
+              if (childData != null) {
+                childDataStr = (new BytesRef(childData)).utf8ToString();
+              }
+            } catch (KeeperException.NoNodeException nne) {
+              // safe to ignore
+            } catch (Exception childErr) {
+              log.error("Failed to get "+collStatePath+" due to: "+childErr);
+            }
+
+            if (childDataStr != null) {
+              if (collectionStates == null) {
+                // initialize lazily as there may not be any external collections
+                collectionStates = new TreeMap<>();
+
+                // add the internal collections
+                if (dataStr != null)
+                  collectionStates.putAll((Map<String,Object>)ObjectBuilder.fromJSON(dataStr));
+              }
+
+              // now add in the external collections
+              Map<String,Object> extColl = (Map<String,Object>)ObjectBuilder.fromJSON(childDataStr);
+              collectionStates.put(collection, extColl.get(collection));
+            }
+          }
+
+          if (collectionStates != null) {
+            CharArr out = new CharArr();
+            new JSONWriter(out, 2).write(collectionStates);
+            dataStr = out.toString();
           }
         }
 

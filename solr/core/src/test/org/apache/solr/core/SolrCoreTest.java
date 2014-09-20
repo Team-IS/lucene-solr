@@ -19,17 +19,15 @@ package org.apache.solr.core;
 
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.handler.RequestHandlerBase;
-import org.apache.solr.handler.component.SpellCheckComponent;
 import org.apache.solr.handler.component.QueryComponent;
+import org.apache.solr.handler.component.SpellCheckComponent;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.util.DefaultSolrThreadFactory;
 import org.apache.solr.util.plugin.SolrCoreAware;
 import org.junit.Test;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -59,19 +57,15 @@ public class SolrCoreTest extends SolrTestCaseJ4 {
     final CoreContainer cores = h.getCoreContainer();
     SolrCore core = cores.getCore("");
 
-    IndexSchema schema = h.getCore().getLatestSchema();
     assertEquals(COLLECTION1, cores.getDefaultCoreName());
     
-    cores.remove("");
+    cores.unload("");
     core.close();
-    core.close();
+
+    CoreDescriptor cd = new CoreDescriptor(cores, COLLECTION1, "collection1",
+                                            CoreDescriptor.CORE_DATADIR, createTempDir("dataDir2").toFile().getAbsolutePath());
     
-    
-    SolrCore newCore = new SolrCore(COLLECTION1, dataDir + File.separator
-        + "datadir2", new SolrConfig("solr/collection1", "solrconfig.xml", null), schema,
-        new CoreDescriptor(cores, COLLECTION1, "solr/collection1"));
-    
-    cores.register(newCore, false);
+    cores.create(cd);
     
     assertEquals(COLLECTION1, cores.getDefaultCoreName());
     
@@ -276,5 +270,4 @@ class EmptyRequestHandler extends RequestHandlerBase
   }
 
   @Override public String getDescription() { return null; }
-  @Override public String getSource() { return null; }
 }

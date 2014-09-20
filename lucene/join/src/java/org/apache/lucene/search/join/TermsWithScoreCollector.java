@@ -21,15 +21,17 @@ import java.io.IOException;
 
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.SortedSetDocValues;
+import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.Collector;
-import org.apache.lucene.search.FieldCache;
 import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefHash;
 
-abstract class TermsWithScoreCollector extends Collector {
+abstract class TermsWithScoreCollector extends SimpleCollector {
 
   private final static int INITIAL_ARRAY_SIZE = 256;
 
@@ -91,7 +93,6 @@ abstract class TermsWithScoreCollector extends Collector {
   // impl that works with single value per document
   static class SV extends TermsWithScoreCollector {
 
-    final BytesRef spare = new BytesRef();
     BinaryDocValues fromDocTerms;
 
     SV(String field, ScoreMode scoreMode) {
@@ -100,8 +101,7 @@ abstract class TermsWithScoreCollector extends Collector {
 
     @Override
     public void collect(int doc) throws IOException {
-      fromDocTerms.get(doc, spare);
-      int ord = collectedTerms.add(spare);
+      int ord = collectedTerms.add(fromDocTerms.get(doc));
       if (ord < 0) {
         ord = -ord - 1;
       } else {
@@ -128,8 +128,8 @@ abstract class TermsWithScoreCollector extends Collector {
     }
 
     @Override
-    public void setNextReader(AtomicReaderContext context) throws IOException {
-      fromDocTerms = FieldCache.DEFAULT.getTerms(context.reader(), field, false);
+    protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+      fromDocTerms = DocValues.getBinary(context.reader(), field);
     }
 
     static class Avg extends SV {
@@ -142,8 +142,7 @@ abstract class TermsWithScoreCollector extends Collector {
 
       @Override
       public void collect(int doc) throws IOException {
-        fromDocTerms.get(doc, spare);
-        int ord = collectedTerms.add(spare);
+        int ord = collectedTerms.add(fromDocTerms.get(doc));
         if (ord < 0) {
           ord = -ord - 1;
         } else {
@@ -181,7 +180,6 @@ abstract class TermsWithScoreCollector extends Collector {
   static class MV extends TermsWithScoreCollector {
 
     SortedSetDocValues fromDocTermOrds;
-    final BytesRef scratch = new BytesRef();
 
     MV(String field, ScoreMode scoreMode) {
       super(field, scoreMode);
@@ -192,9 +190,7 @@ abstract class TermsWithScoreCollector extends Collector {
       fromDocTermOrds.setDocument(doc);
       long ord;
       while ((ord = fromDocTermOrds.nextOrd()) != SortedSetDocValues.NO_MORE_ORDS) {
-        fromDocTermOrds.lookupOrd(ord, scratch);
-        
-        int termID = collectedTerms.add(scratch);
+        int termID = collectedTerms.add(fromDocTermOrds.lookupOrd(ord));
         if (termID < 0) {
           termID = -termID - 1;
         } else {
@@ -214,8 +210,8 @@ abstract class TermsWithScoreCollector extends Collector {
     }
 
     @Override
-    public void setNextReader(AtomicReaderContext context) throws IOException {
-      fromDocTermOrds = FieldCache.DEFAULT.getDocTermOrds(context.reader(), field);
+    protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+      fromDocTermOrds = DocValues.getSortedSet(context.reader(), field);
     }
 
     static class Avg extends MV {
@@ -231,14 +227,13 @@ abstract class TermsWithScoreCollector extends Collector {
         fromDocTermOrds.setDocument(doc);
         long ord;
         while ((ord = fromDocTermOrds.nextOrd()) != SortedSetDocValues.NO_MORE_ORDS) {
-          fromDocTermOrds.lookupOrd(ord, scratch);
-          
-          int termID = collectedTerms.add(scratch);
+          int termID = collectedTerms.add(fromDocTermOrds.lookupOrd(ord));
           if (termID < 0) {
             termID = -termID - 1;
           } else {
             if (termID >= scoreSums.length) {
               scoreSums = ArrayUtil.grow(scoreSums);
+              scoreCounts = ArrayUtil.grow(scoreCounts);
             }
           }
           

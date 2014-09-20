@@ -17,10 +17,13 @@ package org.apache.lucene.codecs.perfield;
  * limitations under the License.
  */
 
+import java.io.Closeable;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader; // javadocs
 import java.util.Set;
@@ -35,6 +38,8 @@ import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Terms;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 
@@ -101,6 +106,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
   
   private class FieldsWriter extends FieldsConsumer {
     final SegmentWriteState writeState;
+    final List<Closeable> toClose = new ArrayList<Closeable>();
 
     public FieldsWriter(SegmentWriteState writeState) {
       this.writeState = writeState;
@@ -163,24 +169,41 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
       }
 
       // Second pass: write postings
-      for(Map.Entry<PostingsFormat,FieldsGroup> ent : formatToGroups.entrySet()) {
-        PostingsFormat format = ent.getKey();
-        final FieldsGroup group = ent.getValue();
+      boolean success = false;
+      try {
+        for(Map.Entry<PostingsFormat,FieldsGroup> ent : formatToGroups.entrySet()) {
+          PostingsFormat format = ent.getKey();
+          final FieldsGroup group = ent.getValue();
 
-        // Exposes only the fields from this group:
-        Fields maskedFields = new FilterFields(fields) {
-            @Override
-            public Iterator<String> iterator() {
-              return group.fields.iterator();
-            }
-          };
+          // Exposes only the fields from this group:
+          Fields maskedFields = new FilterFields(fields) {
+              @Override
+              public Iterator<String> iterator() {
+                return group.fields.iterator();
+              }
+            };
 
-        format.fieldsConsumer(group.state).write(maskedFields);
+          FieldsConsumer consumer = format.fieldsConsumer(group.state);
+          toClose.add(consumer);
+          consumer.write(maskedFields);
+        }
+        success = true;
+      } finally {
+        if (success == false) {
+          IOUtils.closeWhileHandlingException(toClose);
+        }
       }
+    }
+
+    @Override
+    public void close() throws IOException {
+      IOUtils.close(toClose);
     }
   }
 
-  private class FieldsReader extends FieldsProducer {
+  private static class FieldsReader extends FieldsProducer {
+
+    private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(FieldsReader.class);
 
     private final Map<String,FieldsProducer> fields = new TreeMap<>();
     private final Map<String,FieldsProducer> formats = new HashMap<>();
@@ -239,12 +262,30 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
 
     @Override
     public long ramBytesUsed() {
-      long sizeInBytes = 0;
+      long ramBytesUsed = BASE_RAM_BYTES_USED;
+      ramBytesUsed += fields.size() * 2L * RamUsageEstimator.NUM_BYTES_OBJECT_REF;
+      ramBytesUsed += formats.size() * 2L * RamUsageEstimator.NUM_BYTES_OBJECT_REF;
       for(Map.Entry<String,FieldsProducer> entry: formats.entrySet()) {
-        sizeInBytes += entry.getKey().length() * RamUsageEstimator.NUM_BYTES_CHAR;
-        sizeInBytes += entry.getValue().ramBytesUsed();
+        ramBytesUsed += entry.getValue().ramBytesUsed();
       }
-      return sizeInBytes;
+      return ramBytesUsed;
+    }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Accountables.namedAccountables("format", formats);
+    }
+
+    @Override
+    public void checkIntegrity() throws IOException {
+      for (FieldsProducer producer : formats.values()) {
+        producer.checkIntegrity();
+      }
+    }
+
+    @Override
+    public String toString() {
+      return "PerFieldPostings(formats=" + formats.size() + ")";
     }
   }
 

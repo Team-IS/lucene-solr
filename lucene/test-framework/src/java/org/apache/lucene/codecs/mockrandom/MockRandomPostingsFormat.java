@@ -18,12 +18,8 @@ package org.apache.lucene.codecs.mockrandom;
  */
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Random;
 
-import org.apache.lucene.codecs.BlockTreeTermsReader;
-import org.apache.lucene.codecs.BlockTreeTermsWriter;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.PostingsFormat;
@@ -38,28 +34,20 @@ import org.apache.lucene.codecs.blockterms.TermsIndexReaderBase;
 import org.apache.lucene.codecs.blockterms.TermsIndexWriterBase;
 import org.apache.lucene.codecs.blockterms.VariableGapTermsIndexReader;
 import org.apache.lucene.codecs.blockterms.VariableGapTermsIndexWriter;
+import org.apache.lucene.codecs.blocktree.BlockTreeTermsReader;
+import org.apache.lucene.codecs.blocktree.BlockTreeTermsWriter;
+import org.apache.lucene.codecs.blocktreeords.OrdsBlockTreeTermsReader;
+import org.apache.lucene.codecs.blocktreeords.OrdsBlockTreeTermsWriter;
 import org.apache.lucene.codecs.lucene41.Lucene41PostingsReader;
 import org.apache.lucene.codecs.lucene41.Lucene41PostingsWriter;
 import org.apache.lucene.codecs.memory.FSTOrdTermsReader;
 import org.apache.lucene.codecs.memory.FSTOrdTermsWriter;
 import org.apache.lucene.codecs.memory.FSTTermsReader;
 import org.apache.lucene.codecs.memory.FSTTermsWriter;
-import org.apache.lucene.codecs.mockintblock.MockFixedIntBlockPostingsFormat;
-import org.apache.lucene.codecs.mockintblock.MockVariableIntBlockPostingsFormat;
-import org.apache.lucene.codecs.mocksep.MockSingleIntFactory;
-import org.apache.lucene.codecs.pulsing.PulsingPostingsReader;
-import org.apache.lucene.codecs.pulsing.PulsingPostingsWriter;
-import org.apache.lucene.codecs.sep.IntIndexInput;
-import org.apache.lucene.codecs.sep.IntIndexOutput;
-import org.apache.lucene.codecs.sep.IntStreamFactory;
-import org.apache.lucene.codecs.sep.SepPostingsReader;
-import org.apache.lucene.codecs.sep.SepPostingsWriter;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.BytesRef;
@@ -90,48 +78,6 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
       };
     } else {
       this.seedRandom = new Random(random.nextLong());
-    }
-  }
-
-  // Chooses random IntStreamFactory depending on file's extension
-  private static class MockIntStreamFactory extends IntStreamFactory {
-    private final int salt;
-    private final List<IntStreamFactory> delegates = new ArrayList<>();
-
-    public MockIntStreamFactory(Random random) {
-      salt = random.nextInt();
-      delegates.add(new MockSingleIntFactory());
-      final int blockSize = TestUtil.nextInt(random, 1, 2000);
-      delegates.add(new MockFixedIntBlockPostingsFormat.MockIntFactory(blockSize));
-      final int baseBlockSize = TestUtil.nextInt(random, 1, 127);
-      delegates.add(new MockVariableIntBlockPostingsFormat.MockIntFactory(baseBlockSize));
-      // TODO: others
-    }
-
-    private static String getExtension(String fileName) {
-      final int idx = fileName.indexOf('.');
-      assert idx != -1;
-      return fileName.substring(idx);
-    }
-
-    @Override
-    public IntIndexInput openInput(Directory dir, String fileName, IOContext context) throws IOException {
-      // Must only use extension, because IW.addIndexes can
-      // rename segment!
-      final IntStreamFactory f = delegates.get((Math.abs(salt ^ getExtension(fileName).hashCode())) % delegates.size());
-      if (LuceneTestCase.VERBOSE) {
-        System.out.println("MockRandomCodec: read using int factory " + f + " from fileName=" + fileName);
-      }
-      return f.openInput(dir, fileName, context);
-    }
-
-    @Override
-    public IntIndexOutput createOutput(Directory dir, String fileName, IOContext context) throws IOException {
-      final IntStreamFactory f = delegates.get((Math.abs(salt ^ getExtension(fileName).hashCode())) % delegates.size());
-      if (LuceneTestCase.VERBOSE) {
-        System.out.println("MockRandomCodec: write using int factory " + f + " to fileName=" + fileName);
-      }
-      return f.createOutput(dir, fileName, context);
     }
   }
 
@@ -171,27 +117,10 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
     
     random.nextInt(); // consume a random for buffersize
 
-    PostingsWriterBase postingsWriter;
-    if (random.nextBoolean()) {
-      postingsWriter = new SepPostingsWriter(state, new MockIntStreamFactory(random), skipInterval);
-    } else {
-      if (LuceneTestCase.VERBOSE) {
-        System.out.println("MockRandomCodec: writing Standard postings");
-      }
-      // TODO: randomize variables like acceptibleOverHead?!
-      postingsWriter = new Lucene41PostingsWriter(state, skipInterval);
-    }
-
-    if (random.nextBoolean()) {
-      final int totTFCutoff = TestUtil.nextInt(random, 1, 20);
-      if (LuceneTestCase.VERBOSE) {
-        System.out.println("MockRandomCodec: writing pulsing postings with totTFCutoff=" + totTFCutoff);
-      }
-      postingsWriter = new PulsingPostingsWriter(state, totTFCutoff, postingsWriter);
-    }
+    PostingsWriterBase postingsWriter = new Lucene41PostingsWriter(state, skipInterval);
 
     final FieldsConsumer fields;
-    final int t1 = random.nextInt(4);
+    final int t1 = random.nextInt(5);
 
     if (t1 == 0) {
       boolean success = false;
@@ -234,7 +163,7 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
           postingsWriter.close();
         }
       }
-    } else {
+    } else if (t1 == 3) {
 
       if (LuceneTestCase.VERBOSE) {
         System.out.println("MockRandomCodec: writing Block terms dict");
@@ -304,6 +233,30 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
           }
         }
       }
+    } else if (t1 == 4) {
+      // Use OrdsBlockTree terms dict
+      if (LuceneTestCase.VERBOSE) {
+        System.out.println("MockRandomCodec: writing OrdsBlockTree");
+      }
+
+      // TODO: would be nice to allow 1 but this is very
+      // slow to write
+      final int minTermsInBlock = TestUtil.nextInt(random, 2, 100);
+      final int maxTermsInBlock = Math.max(2, (minTermsInBlock-1)*2 + random.nextInt(100));
+
+      boolean success = false;
+      try {
+        fields = new OrdsBlockTreeTermsWriter(state, postingsWriter, minTermsInBlock, maxTermsInBlock);
+        success = true;
+      } finally {
+        if (!success) {
+          postingsWriter.close();
+        }
+      }
+      
+    } else {
+      // BUG!
+      throw new AssertionError();
     }
 
     return fields;
@@ -327,31 +280,10 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
       System.out.println("MockRandomCodec: readBufferSize=" + readBufferSize);
     }
 
-    PostingsReaderBase postingsReader;
-
-    if (random.nextBoolean()) {
-      if (LuceneTestCase.VERBOSE) {
-        System.out.println("MockRandomCodec: reading Sep postings");
-      }
-      postingsReader = new SepPostingsReader(state.directory, state.fieldInfos, state.segmentInfo,
-                                             state.context, new MockIntStreamFactory(random), state.segmentSuffix);
-    } else {
-      if (LuceneTestCase.VERBOSE) {
-        System.out.println("MockRandomCodec: reading Standard postings");
-      }
-      postingsReader = new Lucene41PostingsReader(state.directory, state.fieldInfos, state.segmentInfo, state.context, state.segmentSuffix);
-    }
-
-    if (random.nextBoolean()) {
-      final int totTFCutoff = TestUtil.nextInt(random, 1, 20);
-      if (LuceneTestCase.VERBOSE) {
-        System.out.println("MockRandomCodec: reading pulsing postings with totTFCutoff=" + totTFCutoff);
-      }
-      postingsReader = new PulsingPostingsReader(state, postingsReader);
-    }
+    PostingsReaderBase postingsReader = new Lucene41PostingsReader(state.directory, state.fieldInfos, state.segmentInfo, state.context, state.segmentSuffix);
 
     final FieldsProducer fields;
-    final int t1 = random.nextInt(4);
+    final int t1 = random.nextInt(5);
     if (t1 == 0) {
       boolean success = false;
       try {
@@ -392,7 +324,7 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
           postingsReader.close();
         }
       }
-    } else {
+    } else if (t1 == 3) {
 
       if (LuceneTestCase.VERBOSE) {
         System.out.println("MockRandomCodec: reading Block terms dict");
@@ -456,6 +388,29 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
           }
         }
       }
+    } else if (t1 == 4) {
+      // Use OrdsBlockTree terms dict
+      if (LuceneTestCase.VERBOSE) {
+        System.out.println("MockRandomCodec: reading OrdsBlockTree terms dict");
+      }
+
+      boolean success = false;
+      try {
+        fields = new OrdsBlockTreeTermsReader(state.directory,
+                                              state.fieldInfos,
+                                              state.segmentInfo,
+                                              postingsReader,
+                                              state.context,
+                                              state.segmentSuffix);
+        success = true;
+      } finally {
+        if (!success) {
+          postingsReader.close();
+        }
+      }
+    } else {
+      // BUG!
+      throw new AssertionError();
     }
 
     return fields;

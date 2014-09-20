@@ -28,11 +28,14 @@ import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.cloud.SolrZkClient;
 import org.apache.solr.common.cloud.ZkNodeProps;
 import org.apache.solr.common.cloud.ZkStateReader;
+import org.apache.solr.core.ConfigSolr;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.core.CoreDescriptor;
+import org.apache.solr.core.CoresLocator;
 import org.apache.solr.handler.admin.CoreAdminHandler;
 import org.apache.solr.handler.component.HttpShardHandlerFactory;
 import org.apache.solr.handler.component.ShardHandlerFactory;
+import org.apache.solr.update.UpdateShardHandler;
 import org.apache.solr.util.ExternalPaths;
 import org.apache.zookeeper.CreateMode;
 import org.junit.AfterClass;
@@ -50,7 +53,7 @@ public class ZkControllerTest extends SolrTestCaseJ4 {
 
   @BeforeClass
   public static void beforeClass() throws Exception {
-    createTempDir();
+
   }
 
   @AfterClass
@@ -81,8 +84,7 @@ public class ZkControllerTest extends SolrTestCaseJ4 {
                  ZkController.generateNodeName("foo-bar", "77", "/solr/sub_dir/"));
 
     // setup a SolrZkClient to do some getBaseUrlForNodeName testing
-    String zkDir = dataDir.getAbsolutePath() + File.separator
-        + "zookeeper/server1/data";
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
 
     ZkTestServer server = new ZkTestServer(zkDir);
     try {
@@ -152,8 +154,7 @@ public class ZkControllerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testReadConfigName() throws Exception {
-    String zkDir = dataDir.getAbsolutePath() + File.separator
-        + "zookeeper/server1/data";
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     CoreContainer cc = null;
 
     ZkTestServer server = new ZkTestServer(zkDir);
@@ -208,8 +209,7 @@ public class ZkControllerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testUploadToCloud() throws Exception {
-    String zkDir = dataDir.getAbsolutePath() + File.separator
-        + "zookeeper/server1/data";
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
 
     ZkTestServer server = new ZkTestServer(zkDir);
     ZkController zkController = null;
@@ -261,8 +261,7 @@ public class ZkControllerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testGetHostName() throws Exception {
-    String zkDir = dataDir.getAbsolutePath() + File.separator
-        + "zookeeper/server1/data";
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     CoreContainer cc = null;
 
     ZkTestServer server = new ZkTestServer(zkDir);
@@ -318,6 +317,31 @@ public class ZkControllerTest extends SolrTestCaseJ4 {
     
     @Override
     public void load() {};
+    
+    @Override
+    public ConfigSolr getConfig() {
+      return new ConfigSolr() {
+
+        @Override
+        public CoresLocator getCoresLocator() {
+          throw new UnsupportedOperationException();
+        }
+
+        @Override
+        protected String getShardHandlerFactoryConfigPath() {
+          throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isPersistent() {
+          throw new UnsupportedOperationException();
+        }};
+    }
+    
+    @Override
+    public UpdateShardHandler getUpdateShardHandler() {
+      return new UpdateShardHandler(null);
+    }
     
     @Override
     public String getAdminPath() {

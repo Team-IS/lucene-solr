@@ -17,15 +17,17 @@ package org.apache.lucene.util.packed;
  * limitations under the License.
  */
 
+import static org.apache.lucene.util.BitUtil.zigZagDecode;
 import static org.apache.lucene.util.packed.AbstractBlockPackedWriter.MAX_BLOCK_SIZE;
 import static org.apache.lucene.util.packed.AbstractBlockPackedWriter.MIN_BLOCK_SIZE;
-import static org.apache.lucene.util.packed.BlockPackedReaderIterator.zigZagDecode;
 import static org.apache.lucene.util.packed.PackedInts.checkBlockSize;
 import static org.apache.lucene.util.packed.PackedInts.numBlocks;
 
 import java.io.IOException;
+import java.util.Collections;
 
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.LongValues;
 import org.apache.lucene.util.RamUsageEstimator;
 
@@ -34,16 +36,33 @@ import org.apache.lucene.util.RamUsageEstimator;
  * {@link MonotonicBlockPackedWriter}.
  * @lucene.internal
  */
-public final class MonotonicBlockPackedReader extends LongValues {
+public class MonotonicBlockPackedReader extends LongValues implements Accountable {
 
-  private final int blockShift, blockMask;
-  private final long valueCount;
-  private final long[] minValues;
-  private final float[] averages;
-  private final PackedInts.Reader[] subReaders;
+  static long expected(long origin, float average, int index) {
+    return origin + (long) (average * (long) index);
+  }
+
+  final int blockShift, blockMask;
+  final long valueCount;
+  final long[] minValues;
+  final float[] averages;
+  final PackedInts.Reader[] subReaders;
+  final long sumBPV;
 
   /** Sole constructor. */
-  public MonotonicBlockPackedReader(IndexInput in, int packedIntsVersion, int blockSize, long valueCount, boolean direct) throws IOException {
+  public static MonotonicBlockPackedReader of(IndexInput in, int packedIntsVersion, int blockSize, long valueCount, boolean direct) throws IOException {
+    if (packedIntsVersion < PackedInts.VERSION_MONOTONIC_WITHOUT_ZIGZAG) {
+      return new MonotonicBlockPackedReader(in, packedIntsVersion, blockSize, valueCount, direct) {
+        @Override
+        protected long decodeDelta(long delta) {
+          return zigZagDecode(delta);
+        }
+      };
+    }
+    return new MonotonicBlockPackedReader(in, packedIntsVersion, blockSize, valueCount, direct);
+  }
+
+  private MonotonicBlockPackedReader(IndexInput in, int packedIntsVersion, int blockSize, long valueCount, boolean direct) throws IOException {
     this.valueCount = valueCount;
     blockShift = checkBlockSize(blockSize, MIN_BLOCK_SIZE, MAX_BLOCK_SIZE);
     blockMask = blockSize - 1;
@@ -51,10 +70,16 @@ public final class MonotonicBlockPackedReader extends LongValues {
     minValues = new long[numBlocks];
     averages = new float[numBlocks];
     subReaders = new PackedInts.Reader[numBlocks];
+    long sumBPV = 0;
     for (int i = 0; i < numBlocks; ++i) {
-      minValues[i] = in.readVLong();
+      if (packedIntsVersion < PackedInts.VERSION_MONOTONIC_WITHOUT_ZIGZAG) {
+        minValues[i] = in.readVLong();
+      } else {
+        minValues[i] = in.readZLong();
+      }
       averages[i] = Float.intBitsToFloat(in.readInt());
       final int bitsPerValue = in.readVInt();
+      sumBPV += bitsPerValue;
       if (bitsPerValue > 64) {
         throw new IOException("Corrupted");
       }
@@ -71,6 +96,7 @@ public final class MonotonicBlockPackedReader extends LongValues {
         }
       }
     }
+    this.sumBPV = sumBPV;
   }
 
   @Override
@@ -78,7 +104,11 @@ public final class MonotonicBlockPackedReader extends LongValues {
     assert index >= 0 && index < valueCount;
     final int block = (int) (index >>> blockShift);
     final int idx = (int) (index & blockMask);
-    return minValues[block] + (long) (idx * averages[block]) + zigZagDecode(subReaders[block].get(idx));
+    return expected(minValues[block], averages[block], idx) + decodeDelta(subReaders[block].get(idx));
+  }
+
+  protected long decodeDelta(long delta) {
+    return delta;
   }
 
   /** Returns the number of values */
@@ -86,7 +116,7 @@ public final class MonotonicBlockPackedReader extends LongValues {
     return valueCount;
   }
   
-  /** Returns the approximate RAM bytes used */
+  @Override
   public long ramBytesUsed() {
     long sizeInBytes = 0;
     sizeInBytes += RamUsageEstimator.sizeOf(minValues);
@@ -96,5 +126,15 @@ public final class MonotonicBlockPackedReader extends LongValues {
     }
     return sizeInBytes;
   }
-
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.emptyList();
+  }
+  
+  @Override
+  public String toString() {
+    long avgBPV = subReaders.length == 0 ? 0 : sumBPV / subReaders.length;
+    return getClass().getSimpleName() + "(blocksize=" + (1<<blockShift) + ",size=" + valueCount + ",avgBPV=" + avgBPV + ")";
+  }
 }

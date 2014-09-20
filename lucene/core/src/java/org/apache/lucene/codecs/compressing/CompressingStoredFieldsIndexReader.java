@@ -17,12 +17,18 @@ package org.apache.lucene.codecs.compressing;
  * limitations under the License.
  */
 
+import static org.apache.lucene.util.BitUtil.zigZagDecode;
+
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.SegmentInfo;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.packed.PackedInts;
@@ -31,11 +37,9 @@ import org.apache.lucene.util.packed.PackedInts;
  * Random-access reader for {@link CompressingStoredFieldsIndexWriter}.
  * @lucene.internal
  */
-public final class CompressingStoredFieldsIndexReader implements Cloneable {
+public final class CompressingStoredFieldsIndexReader implements Cloneable, Accountable {
 
-  static long moveLowOrderBitToSign(long n) {
-    return ((n >>> 1) ^ -(n & 1));
-  }
+  private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(CompressingStoredFieldsIndexReader.class);
 
   final int maxDoc;
   final int[] docBases;
@@ -80,7 +84,7 @@ public final class CompressingStoredFieldsIndexReader implements Cloneable {
       avgChunkDocs[blockCount] = fieldsIndexIn.readVInt();
       final int bitsPerDocBase = fieldsIndexIn.readVInt();
       if (bitsPerDocBase > 32) {
-        throw new CorruptIndexException("Corrupted bitsPerDocBase (resource=" + fieldsIndexIn + ")");
+        throw new CorruptIndexException("Corrupted bitsPerDocBase: " + bitsPerDocBase, fieldsIndexIn);
       }
       docBasesDeltas[blockCount] = PackedInts.getReaderNoHeader(fieldsIndexIn, PackedInts.Format.PACKED, packedIntsVersion, numChunks, bitsPerDocBase);
 
@@ -89,7 +93,7 @@ public final class CompressingStoredFieldsIndexReader implements Cloneable {
       avgChunkSizes[blockCount] = fieldsIndexIn.readVLong();
       final int bitsPerStartPointer = fieldsIndexIn.readVInt();
       if (bitsPerStartPointer > 64) {
-        throw new CorruptIndexException("Corrupted bitsPerStartPointer (resource=" + fieldsIndexIn + ")");
+        throw new CorruptIndexException("Corrupted bitsPerStartPointer: " + bitsPerStartPointer, fieldsIndexIn);
       }
       startPointersDeltas[blockCount] = PackedInts.getReaderNoHeader(fieldsIndexIn, PackedInts.Format.PACKED, packedIntsVersion, numChunks, bitsPerStartPointer);
 
@@ -122,13 +126,13 @@ public final class CompressingStoredFieldsIndexReader implements Cloneable {
 
   private int relativeDocBase(int block, int relativeChunk) {
     final int expected = avgChunkDocs[block] * relativeChunk;
-    final long delta = moveLowOrderBitToSign(docBasesDeltas[block].get(relativeChunk));
+    final long delta = zigZagDecode(docBasesDeltas[block].get(relativeChunk));
     return expected + (int) delta;
   }
 
   private long relativeStartPointer(int block, int relativeChunk) {
     final long expected = avgChunkSizes[block] * relativeChunk;
-    final long delta = moveLowOrderBitToSign(startPointersDeltas[block].get(relativeChunk));
+    final long delta = zigZagDecode(startPointersDeltas[block].get(relativeChunk));
     return expected + delta;
   }
 
@@ -161,14 +165,17 @@ public final class CompressingStoredFieldsIndexReader implements Cloneable {
   public CompressingStoredFieldsIndexReader clone() {
     return this;
   }
-  
-  long ramBytesUsed() {
-    long res = 0;
-    
-    for(PackedInts.Reader r : docBasesDeltas) {
+
+  @Override
+  public long ramBytesUsed() {
+    long res = BASE_RAM_BYTES_USED;
+
+    res += RamUsageEstimator.shallowSizeOf(docBasesDeltas);
+    for (PackedInts.Reader r : docBasesDeltas) {
       res += r.ramBytesUsed();
     }
-    for(PackedInts.Reader r : startPointersDeltas) {
+    res += RamUsageEstimator.shallowSizeOf(startPointersDeltas);
+    for (PackedInts.Reader r : startPointersDeltas) {
       res += r.ramBytesUsed();
     }
 
@@ -180,4 +187,27 @@ public final class CompressingStoredFieldsIndexReader implements Cloneable {
     return res;
   }
 
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    List<Accountable> resources = new ArrayList<>();
+    
+    long docBaseDeltaBytes = RamUsageEstimator.shallowSizeOf(docBasesDeltas);
+    for (PackedInts.Reader r : docBasesDeltas) {
+      docBaseDeltaBytes += r.ramBytesUsed();
+    }
+    resources.add(Accountables.namedAccountable("doc base deltas", docBaseDeltaBytes));
+    
+    long startPointerDeltaBytes = RamUsageEstimator.shallowSizeOf(startPointersDeltas);
+    for (PackedInts.Reader r : startPointersDeltas) {
+      startPointerDeltaBytes += r.ramBytesUsed();
+    }
+    resources.add(Accountables.namedAccountable("start pointer deltas", startPointerDeltaBytes));
+    
+    return resources;
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(blocks=" + docBases.length + ")";
+  }
 }

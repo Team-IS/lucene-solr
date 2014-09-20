@@ -20,10 +20,12 @@ import org.apache.zookeeper.data.ACL;
 import org.xml.sax.SAXException;
 
 import javax.xml.parsers.ParserConfigurationException;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 
@@ -192,7 +194,7 @@ public class ZkCLI {
 
           ZkController.bootstrapConf(zkClient, cc, solrHome);
 
-          // No need to shutdown the CoreContainer, as it wasn't started
+          // No need to close the CoreContainer, as it wasn't started
           // up in the first place...
           
         } else if (line.getOptionValue(CMD).equals(UPCONFIG)) {
@@ -247,14 +249,12 @@ public class ZkCLI {
           }
           zkClient.makePath(arglist.get(0).toString(), true);
         } else if (line.getOptionValue(CMD).equals(PUT)) {
-          List<ACL> acl = ZooDefs.Ids.OPEN_ACL_UNSAFE;
           List arglist = line.getArgList();
           if (arglist.size() != 2) {
             System.out.println("-" + PUT + " requires two args - the path to create and the data string");
             System.exit(1);
           }
-          zkClient.create(arglist.get(0).toString(), arglist.get(1).toString().getBytes("UTF-8"),
-                          acl, CreateMode.PERSISTENT, true);
+          zkClient.create(arglist.get(0).toString(), arglist.get(1).toString().getBytes(StandardCharsets.UTF_8), CreateMode.PERSISTENT, true);
         } else if (line.getOptionValue(CMD).equals(PUT_FILE)) {
           List arglist = line.getArgList();
           if (arglist.size() != 2) {
@@ -263,8 +263,7 @@ public class ZkCLI {
           }
           InputStream is = new FileInputStream(arglist.get(1).toString());
           try {
-            zkClient.create(arglist.get(0).toString(), IOUtils.toByteArray(is),
-                ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT, true);
+            zkClient.create(arglist.get(0).toString(), IOUtils.toByteArray(is), CreateMode.PERSISTENT, true);
           } finally {
             IOUtils.closeQuietly(is);
           }
@@ -276,7 +275,7 @@ public class ZkCLI {
             System.exit(1);
           }
           byte [] data = zkClient.getData(arglist.get(0).toString(), null, null, true);
-          System.out.println(new String(data, "UTF-8"));
+          System.out.println(new String(data, StandardCharsets.UTF_8));
         } else if (line.getOptionValue(CMD).equals(GET_FILE)) {
           List arglist = line.getArgList();
           if (arglist.size() != 2) {

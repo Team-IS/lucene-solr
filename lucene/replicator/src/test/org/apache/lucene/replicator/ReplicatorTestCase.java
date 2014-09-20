@@ -19,10 +19,9 @@ package org.apache.lucene.replicator;
 
 import java.util.Random;
 
-import org.apache.http.conn.ClientConnectionManager;
-import org.apache.http.impl.conn.PoolingClientConnectionManager;
+import org.apache.http.conn.HttpClientConnectionManager;
+import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Server;
@@ -35,10 +34,9 @@ import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.junit.AfterClass;
 
-@SuppressCodecs("Lucene3x")
 public abstract class ReplicatorTestCase extends LuceneTestCase {
   
-  private static ClientConnectionManager clientConnectionManager;
+  private static HttpClientConnectionManager clientConnectionManager;
   
   @AfterClass
   public static void afterClassReplicatorTestCase() throws Exception {
@@ -144,15 +142,15 @@ public abstract class ReplicatorTestCase extends LuceneTestCase {
   }
   
   /**
-   * Returns a {@link ClientConnectionManager}.
+   * Returns a {@link HttpClientConnectionManager}.
    * <p>
-   * <b>NOTE:</b> do not {@link ClientConnectionManager#shutdown()} this
-   * connection manager, it will be shutdown automatically after all tests have
+   * <b>NOTE:</b> do not {@link HttpClientConnectionManager#shutdown()} this
+   * connection manager, it will be close automatically after all tests have
    * finished.
    */
-  public static synchronized ClientConnectionManager getClientConnectionManager() {
+  public static synchronized HttpClientConnectionManager getClientConnectionManager() {
     if (clientConnectionManager == null) {
-      PoolingClientConnectionManager ccm = new PoolingClientConnectionManager();
+      PoolingHttpClientConnectionManager ccm = new PoolingHttpClientConnectionManager();
       ccm.setDefaultMaxPerRoute(128);
       ccm.setMaxTotal(128);
       clientConnectionManager = ccm;

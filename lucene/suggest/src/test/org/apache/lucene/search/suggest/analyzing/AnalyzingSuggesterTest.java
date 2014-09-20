@@ -17,13 +17,12 @@ package org.apache.lucene.search.suggest.analyzing;
  * limitations under the License.
  */
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Reader;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -39,9 +38,9 @@ import org.apache.lucene.analysis.CannedBinaryTokenStream.BinaryToken;
 import org.apache.lucene.analysis.CannedBinaryTokenStream;
 import org.apache.lucene.analysis.CannedTokenStream;
 import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.analysis.MockBytesAttributeFactory;
 import org.apache.lucene.analysis.MockTokenFilter;
 import org.apache.lucene.analysis.MockTokenizer;
+import org.apache.lucene.analysis.MockUTF16TermAttributeImpl;
 import org.apache.lucene.analysis.Token;
 import org.apache.lucene.analysis.TokenFilter;
 import org.apache.lucene.analysis.TokenStream;
@@ -52,6 +51,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.search.suggest.Lookup.LookupResult;
 import org.apache.lucene.search.suggest.Input;
 import org.apache.lucene.search.suggest.InputArrayIterator;
+import org.apache.lucene.util.AttributeFactory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LineFileDocs;
 import org.apache.lucene.util.LuceneTestCase;
@@ -621,8 +621,6 @@ public class AnalyzingSuggesterTest extends LuceneTestCase {
     private int numStopChars;
     private boolean preserveHoles;
 
-    private final MockBytesAttributeFactory factory = new MockBytesAttributeFactory();
-
     public MockTokenEatingAnalyzer(int numStopChars, boolean preserveHoles) {
       this.preserveHoles = preserveHoles;
       this.numStopChars = numStopChars;
@@ -630,7 +628,8 @@ public class AnalyzingSuggesterTest extends LuceneTestCase {
 
     @Override
     public TokenStreamComponents createComponents(String fieldName) {
-      MockTokenizer tokenizer = new MockTokenizer(factory, MockTokenizer.WHITESPACE, false, MockTokenizer.DEFAULT_MAX_TOKEN_LENGTH);
+      MockTokenizer tokenizer = new MockTokenizer(MockUTF16TermAttributeImpl.UTF16_TERM_ATTRIBUTE_FACTORY,
+          MockTokenizer.WHITESPACE, false, MockTokenizer.DEFAULT_MAX_TOKEN_LENGTH);
       tokenizer.setEnableChecks(true);
       TokenStream next;
       if (numStopChars != 0) {
@@ -921,16 +920,15 @@ public class AnalyzingSuggesterTest extends LuceneTestCase {
     assertEquals(3, results.get(2).value);
 
     // Try again after save/load:
-    File tmpDir = TestUtil.getTempDir("AnalyzingSuggesterTest");
-    tmpDir.mkdir();
+    Path tmpDir = createTempDir("AnalyzingSuggesterTest");
 
-    File path = new File(tmpDir, "suggester");
+    Path path = tmpDir.resolve("suggester");
 
-    OutputStream os = new FileOutputStream(path);
+    OutputStream os = Files.newOutputStream(path);
     suggester.store(os);
     os.close();
 
-    InputStream is = new FileInputStream(path);
+    InputStream is = Files.newInputStream(path);
     suggester.load(is);
     is.close();
 
@@ -983,16 +981,15 @@ public class AnalyzingSuggesterTest extends LuceneTestCase {
     assertEquals(5, results.get(1).value);
 
     // Try again after save/load:
-    File tmpDir = TestUtil.getTempDir("AnalyzingSuggesterTest");
-    tmpDir.mkdir();
+    Path tmpDir = createTempDir("AnalyzingSuggesterTest");
 
-    File path = new File(tmpDir, "suggester");
+    Path path = tmpDir.resolve("suggester");
 
-    OutputStream os = new FileOutputStream(path);
+    OutputStream os = Files.newOutputStream(path);
     suggester.store(os);
     os.close();
 
-    InputStream is = new FileInputStream(path);
+    InputStream is = Files.newInputStream(path);
     suggester.load(is);
     is.close();
 
@@ -1053,16 +1050,15 @@ public class AnalyzingSuggesterTest extends LuceneTestCase {
     assertEquals(5, results.get(1).value);
 
     // Try again after save/load:
-    File tmpDir = TestUtil.getTempDir("AnalyzingSuggesterTest");
-    tmpDir.mkdir();
+    Path tmpDir = createTempDir("AnalyzingSuggesterTest");
 
-    File path = new File(tmpDir, "suggester");
+    Path path = tmpDir.resolve("suggester");
 
-    OutputStream os = new FileOutputStream(path);
+    OutputStream os = Files.newOutputStream(path);
     suggester.store(os);
     os.close();
 
-    InputStream is = new FileInputStream(path);
+    InputStream is = Files.newInputStream(path);
     suggester.load(is);
     is.close();
 
@@ -1192,13 +1188,26 @@ public class AnalyzingSuggesterTest extends LuceneTestCase {
     }
   }
 
-  @SafeVarargs
-  public final <T> Iterable<T> shuffle(T...values) {
-    final List<T> asList = new ArrayList<>(values.length);
-    for (T value : values) {
+  static final Iterable<Input> shuffle(Input...values) {
+    final List<Input> asList = new ArrayList<>(values.length);
+    for (Input value : values) {
       asList.add(value);
     }
     Collections.shuffle(asList, random());
     return asList;
+  }
+
+  // TODO: we need BaseSuggesterTestCase?
+  public void testTooLongSuggestion() throws Exception {
+    Analyzer a = new MockAnalyzer(random());
+    AnalyzingSuggester suggester = new AnalyzingSuggester(a);
+    String bigString = TestUtil.randomSimpleString(random(), 30000, 30000);
+    try {
+      suggester.build(new InputArrayIterator(new Input[] {
+            new Input(bigString, 7)}));
+      fail("did not hit expected exception");
+    } catch (IllegalArgumentException iae) {
+      // expected
+    }
   }
 }

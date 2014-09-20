@@ -18,38 +18,40 @@ package org.apache.solr.util;
  */
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileFilter;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.ByteArrayInputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.UnsupportedEncodingException;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.ProtocolException;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.HashSet;
 import java.util.TimeZone;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
-import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
-import java.net.ProtocolException;
-import java.net.URL;
-import java.net.URLEncoder;
 
+import javax.xml.bind.DatatypeConverter;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.XPath;
@@ -812,10 +814,12 @@ public class SimplePostTool {
     try {
       if(mockMode) return;
       HttpURLConnection urlc = (HttpURLConnection) url.openConnection();
-      if (HttpURLConnection.HTTP_OK != urlc.getResponseCode()) {
-        warn("Solr returned an error #" + urlc.getResponseCode() + 
-            " " + urlc.getResponseMessage() + " for url "+url);
+      if (url.getUserInfo() != null) {
+        String encoding = DatatypeConverter.printBase64Binary(url.getUserInfo().getBytes(StandardCharsets.US_ASCII));
+        urlc.setRequestProperty("Authorization", "Basic " + encoding);
       }
+      urlc.connect();
+      checkResponseCode(urlc);
     } catch (IOException e) {
       warn("An error occurred posting data to "+url+". Please check that Solr is running.");
     }
@@ -845,46 +849,67 @@ public class SimplePostTool {
         urlc.setUseCaches(false);
         urlc.setAllowUserInteraction(false);
         urlc.setRequestProperty("Content-type", type);
-
+        if (url.getUserInfo() != null) {
+          String encoding = DatatypeConverter.printBase64Binary(url.getUserInfo().getBytes(StandardCharsets.US_ASCII));
+          urlc.setRequestProperty("Authorization", "Basic " + encoding);
+        }
         if (null != length) urlc.setFixedLengthStreamingMode(length);
-
+        urlc.connect();
       } catch (IOException e) {
         fatal("Connection error (is Solr running at " + solrUrl + " ?): " + e);
         success = false;
       }
       
-      OutputStream out = null;
-      try {
-        out = urlc.getOutputStream();
+      try (final OutputStream out = urlc.getOutputStream()) {
         pipe(data, out);
       } catch (IOException e) {
         fatal("IOException while posting data: " + e);
         success = false;
-      } finally {
-        try { if(out!=null) out.close(); } catch (IOException x) { /*NOOP*/ }
       }
       
-      InputStream in = null;
       try {
-        if (HttpURLConnection.HTTP_OK != urlc.getResponseCode()) {
-          warn("Solr returned an error #" + urlc.getResponseCode() + 
-                " " + urlc.getResponseMessage());
-          success = false;
+        success &= checkResponseCode(urlc);
+        try (final InputStream in = urlc.getInputStream()) {
+          pipe(in, output);
         }
-
-        in = urlc.getInputStream();
-        pipe(in, output);
       } catch (IOException e) {
         warn("IOException while reading response: " + e);
         success = false;
-      } finally {
-        try { if(in!=null) in.close(); } catch (IOException x) { /*NOOP*/ }
       }
-      
     } finally {
-      if(urlc!=null) urlc.disconnect();
+      if (urlc!=null) urlc.disconnect();
     }
     return success;
+  }
+  
+  private static boolean checkResponseCode(HttpURLConnection urlc) throws IOException {
+    if (urlc.getResponseCode() >= 400) {
+      warn("Solr returned an error #" + urlc.getResponseCode() + 
+            " (" + urlc.getResponseMessage() + ") for url: " + urlc.getURL());
+      Charset charset = StandardCharsets.ISO_8859_1;
+      final String contentType = urlc.getContentType();
+      // code cloned from ContentStreamBase, but post.jar should be standalone!
+      if (contentType != null) {
+        int idx = contentType.toLowerCase(Locale.ROOT).indexOf("charset=");
+        if (idx > 0) {
+          charset = Charset.forName(contentType.substring(idx + "charset=".length()).trim());
+        }
+      }
+      // Print the response returned by Solr
+      try (InputStream errStream = urlc.getErrorStream()) {
+        if (errStream != null) {
+          BufferedReader br = new BufferedReader(new InputStreamReader(errStream, charset));
+          final StringBuilder response = new StringBuilder("Response: ");
+          int ch;
+          while ((ch = br.read()) != -1) {
+            response.append((char) ch);
+          }
+          warn(response.toString().trim());
+        }
+      }
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -893,13 +918,7 @@ public class SimplePostTool {
    * @return the input stream
    */
   public static InputStream stringToStream(String s) {
-    InputStream is = null;
-    try {
-      is = new ByteArrayInputStream(s.getBytes("UTF-8"));
-    } catch (UnsupportedEncodingException e) {
-      fatal("Shouldn't happen: UTF-8 not supported?!?!?!");
-    }
-    return is;
+    return new ByteArrayInputStream(s.getBytes(StandardCharsets.UTF_8));
   }
 
   /**
@@ -961,10 +980,9 @@ public class SimplePostTool {
   /**
    * Takes a string as input and returns a DOM 
    */
-  public static Document makeDom(String in, String inputEncoding) throws SAXException, IOException,
+  public static Document makeDom(byte[] in) throws SAXException, IOException,
   ParserConfigurationException {
-    InputStream is = new ByteArrayInputStream(in
-        .getBytes(inputEncoding));
+    InputStream is = new ByteArrayInputStream(in);
     Document dom = DocumentBuilderFactory.newInstance()
         .newDocumentBuilder().parse(is);
     return dom;
@@ -1105,7 +1123,7 @@ public class SimplePostTool {
      */
     protected List<String> parseRobotsTxt(InputStream is) throws IOException {
       List<String> disallows = new ArrayList<>();
-      BufferedReader r = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+      BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
       String l;
       while((l = r.readLine()) != null) {
         String[] arr = l.split("#");
@@ -1137,10 +1155,9 @@ public class SimplePostTool {
         URL extractUrl = new URL(appendParam(postUrl.toString(), "extractOnly=true"));
         boolean success = postData(is, null, os, type, extractUrl);
         if(success) {
-          String rawXml = os.toString("UTF-8");
-          Document d = makeDom(rawXml, "UTF-8");
+          Document d = makeDom(os.toByteArray());
           String innerXml = getXP(d, "/response/str/text()[1]", false);
-          d = makeDom(innerXml, "UTF-8");
+          d = makeDom(innerXml.getBytes(StandardCharsets.UTF_8));
           NodeList links = getNodesFromXP(d, "/html/body//a/@href");
           for(int i = 0; i < links.getLength(); i++) {
             String link = links.item(i).getTextContent();

@@ -18,16 +18,22 @@ package org.apache.lucene.store;
  */
 
 import java.io.IOException;
+import java.util.Collections;
+import java.util.zip.CRC32;
+import java.util.zip.Checksum;
+
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 
 /**
  * A memory-resident {@link IndexOutput} implementation.
  *
  * @lucene.internal
  */
-public class RAMOutputStream extends IndexOutput {
+public class RAMOutputStream extends IndexOutput implements Accountable {
   static final int BUFFER_SIZE = 1024;
 
-  private RAMFile file;
+  private final RAMFile file;
 
   private byte[] currentBuffer;
   private int currentBufferIndex;
@@ -35,19 +41,26 @@ public class RAMOutputStream extends IndexOutput {
   private int bufferPosition;
   private long bufferStart;
   private int bufferLength;
+  
+  private final Checksum crc;
 
   /** Construct an empty output buffer. */
   public RAMOutputStream() {
-    this(new RAMFile());
+    this(new RAMFile(), false);
   }
 
-  public RAMOutputStream(RAMFile f) {
+  public RAMOutputStream(RAMFile f, boolean checksum) {
     file = f;
 
     // make sure that we switch to the
     // first needed buffer lazily
     currentBufferIndex = -1;
     currentBuffer = null;
+    if (checksum) {
+      crc = new BufferedChecksum(new CRC32());
+    } else {
+      crc = null;
+    }
   }
 
   /** Copy the current contents of this buffer to the named output. */
@@ -95,6 +108,9 @@ public class RAMOutputStream extends IndexOutput {
     bufferStart = 0;
     bufferLength = 0;
     file.setLength(0);
+    if (crc != null) {
+      crc.reset();
+    }
   }
 
   @Override
@@ -103,15 +119,13 @@ public class RAMOutputStream extends IndexOutput {
   }
 
   @Override
-  public long length() {
-    return file.length;
-  }
-
-  @Override
   public void writeByte(byte b) throws IOException {
     if (bufferPosition == bufferLength) {
       currentBufferIndex++;
       switchCurrentBuffer();
+    }
+    if (crc != null) {
+      crc.update(b);
     }
     currentBuffer[bufferPosition++] = b;
   }
@@ -119,6 +133,9 @@ public class RAMOutputStream extends IndexOutput {
   @Override
   public void writeBytes(byte[] b, int offset, int len) throws IOException {
     assert b != null;
+    if (crc != null) {
+      crc.update(b, offset, len);
+    }
     while (len > 0) {
       if (bufferPosition ==  bufferLength) {
         currentBufferIndex++;
@@ -152,8 +169,8 @@ public class RAMOutputStream extends IndexOutput {
     }
   }
 
-  @Override
-  public void flush() throws IOException {
+  /** Forces any buffered output to be written. */
+  protected void flush() throws IOException {
     setFileLength();
   }
 
@@ -163,7 +180,22 @@ public class RAMOutputStream extends IndexOutput {
   }
 
   /** Returns byte usage of all buffers. */
-  public long sizeInBytes() {
+  @Override
+  public long ramBytesUsed() {
     return (long) file.numBuffers() * (long) BUFFER_SIZE;
-  }  
+  }
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.singleton(Accountables.namedAccountable("file", file));
+  }
+
+  @Override
+  public long getChecksum() throws IOException {
+    if (crc == null) {
+      throw new IllegalStateException("internal RAMOutputStream created with checksum disabled");
+    } else {
+      return crc.getValue();
+    }
+  }
 }

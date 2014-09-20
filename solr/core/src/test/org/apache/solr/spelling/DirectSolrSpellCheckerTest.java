@@ -21,22 +21,21 @@ import java.util.Collection;
 import java.util.Map;
 
 import org.apache.lucene.analysis.Token;
+import org.apache.lucene.util.LuceneTestCase.SuppressTempFileChecks;
 import org.apache.solr.SolrTestCaseJ4;
-import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.SpellingParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.handler.component.SpellCheckComponent;
-import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.util.RefCounted;
-import org.apache.solr.util.TestHarness;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
  * Simple tests for {@link DirectSolrSpellChecker}
  */
+@SuppressTempFileChecks(bugUrl = "https://issues.apache.org/jira/browse/SOLR-1877 Spellcheck IndexReader leak bug?")
 public class DirectSolrSpellCheckerTest extends SolrTestCaseJ4 {
 
   private static SpellingQueryConverter queryConverter;
@@ -90,7 +89,7 @@ public class DirectSolrSpellCheckerTest extends SolrTestCaseJ4 {
         "//lst[@name='spellcheck']/lst[@name='suggestions']/lst[@name='fox']/int[@name='origFreq']=1",
         "//lst[@name='spellcheck']/lst[@name='suggestions']/lst[@name='fox']/arr[@name='suggestion']/lst/str[@name='word']='foo'",
         "//lst[@name='spellcheck']/lst[@name='suggestions']/lst[@name='fox']/arr[@name='suggestion']/lst/int[@name='freq']=2",
-        "//lst[@name='spellcheck']/lst[@name='suggestions']/bool[@name='correctlySpelled']='true'"
+        "//lst[@name='spellcheck']/bool[@name='correctlySpelled']='true'"
     );
   }  
   

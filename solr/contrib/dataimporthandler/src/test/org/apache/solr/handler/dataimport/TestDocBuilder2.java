@@ -16,16 +16,17 @@
  */
 package org.apache.solr.handler.dataimport;
 
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.solr.request.LocalSolrQueryRequest;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 
-import org.apache.solr.request.LocalSolrQueryRequest;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.io.File;
+import java.nio.charset.StandardCharsets;
 
 /**
  * <p>
@@ -72,6 +73,18 @@ public class TestDocBuilder2 extends AbstractDataImportHandlerTestCase {
     assertTrue("End event listener was not called", EndEventListener.executed);
     assertTrue("Update request processor processAdd was not called", TestUpdateRequestProcessor.processAddCalled);
     assertTrue("Update request processor finish was not called", TestUpdateRequestProcessor.finishCalled);
+  }
+
+  @Test
+  public void testErrorHandler() throws Exception {
+    List rows = new ArrayList();
+    rows.add(createMap("id", "1", "FORCE_ERROR", "true"));
+    MockDataSource.setIterator("select * from x", rows.iterator());
+
+    runFullImport(dataConfigWithErrorHandler);
+
+    assertTrue("Error event listener was not called", ErrorEventListener.executed);
+    assertTrue(ErrorEventListener.lastException.getMessage().contains("ForcedException"));
   }
 
   @Test
@@ -240,21 +253,18 @@ public class TestDocBuilder2 extends AbstractDataImportHandlerTestCase {
   @Test
   @Ignore("Fix Me. See SOLR-4103.")
   public void testFileListEntityProcessor_lastIndexTime() throws Exception  {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    tmpdir.deleteOnExit();
+    File tmpdir = File.createTempFile("test", "tmp", createTempDir().toFile());
 
     Map<String, String> params = createMap("baseDir", tmpdir.getAbsolutePath());
 
-    createFile(tmpdir, "a.xml", "a.xml".getBytes("UTF-8"), true);
-    createFile(tmpdir, "b.xml", "b.xml".getBytes("UTF-8"), true);
-    createFile(tmpdir, "c.props", "c.props".getBytes("UTF-8"), true);
+    createFile(tmpdir, "a.xml", "a.xml".getBytes(StandardCharsets.UTF_8), true);
+    createFile(tmpdir, "b.xml", "b.xml".getBytes(StandardCharsets.UTF_8), true);
+    createFile(tmpdir, "c.props", "c.props".getBytes(StandardCharsets.UTF_8), true);
     runFullImport(dataConfigFileList, params);
     assertQ(req("*:*"), "//*[@numFound='3']");
 
     // Add a new file after a full index is done
-    createFile(tmpdir, "t.xml", "t.xml".getBytes("UTF-8"), false);
+    createFile(tmpdir, "t.xml", "t.xml".getBytes(StandardCharsets.UTF_8), false);
     runFullImport(dataConfigFileList, params);
     // we should find only 1 because by default clean=true is passed
     // and this particular import should find only one file t.xml
@@ -278,6 +288,13 @@ public class TestDocBuilder2 extends AbstractDataImportHandlerTestCase {
     }
   }
 
+  public static class ForcedExceptionTransformer extends Transformer {
+    @Override
+    public Object transformRow(Map<String, Object> row, Context context) {
+      throw new DataImportHandlerException(DataImportHandlerException.SEVERE, "ForcedException");
+    }
+  }
+
   public static class MockDataSource2 extends MockDataSource  {
 
   }
@@ -297,6 +314,17 @@ public class TestDocBuilder2 extends AbstractDataImportHandlerTestCase {
     @Override
     public void onEvent(Context ctx) {
       executed = true;
+    }
+  }
+
+  public static class ErrorEventListener implements EventListener {
+    public static boolean executed = false;
+    public static Exception lastException = null;
+
+    @Override
+    public void onEvent(Context ctx) {
+      executed = true;
+      lastException = ((ContextImpl) ctx).lastException;
     }
   }
 
@@ -348,6 +376,15 @@ public class TestDocBuilder2 extends AbstractDataImportHandlerTestCase {
           "        <entity name=\"books\" query=\"select * from x\">\n" +
           "            <field column=\"ID\" />\n" +
           "            <field column=\"Desc\" />\n" +
+          "        </entity>\n" +
+          "    </document>\n" +
+          "</dataConfig>";
+
+  private final String dataConfigWithErrorHandler = "<dataConfig> <dataSource  type=\"MockDataSource\"/>\n" +
+          "    <document onError=\"TestDocBuilder2$ErrorEventListener\">\n" +
+          "        <entity name=\"books\" query=\"select * from x\" transformer=\"TestDocBuilder2$ForcedExceptionTransformer\">\n" +
+          "            <field column=\"id\" />\n" +
+          "            <field column=\"FORCE_ERROR\" />\n" +
           "        </entity>\n" +
           "    </document>\n" +
           "</dataConfig>";

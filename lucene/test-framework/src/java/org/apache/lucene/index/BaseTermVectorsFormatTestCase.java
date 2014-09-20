@@ -47,7 +47,6 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.AttributeImpl;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FixedBitSet;
-import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
 
 import com.carrotsearch.randomizedtesting.generators.RandomPicks;
@@ -58,26 +57,7 @@ import com.carrotsearch.randomizedtesting.generators.RandomPicks;
  * uses it and extend this class and override {@link #getCodec()}.
  * @lucene.experimental
  */
-public abstract class BaseTermVectorsFormatTestCase extends LuceneTestCase {
-
-  private Codec savedCodec;
-
-  /**
-   * Returns the Codec to run tests against
-   */
-  protected abstract Codec getCodec();
-
-  public void setUp() throws Exception {
-    super.setUp();
-    // set the default codec, so adding test cases to this isn't fragile
-    savedCodec = Codec.getDefault();
-    Codec.setDefault(getCodec());
-  }
-
-  public void tearDown() throws Exception {
-    Codec.setDefault(savedCodec); // restore
-    super.tearDown();
-  }
+public abstract class BaseTermVectorsFormatTestCase extends BaseIndexFileFormatTestCase {
 
   /**
    * A combination of term vectors options.
@@ -124,6 +104,17 @@ public abstract class BaseTermVectorsFormatTestCase extends LuceneTestCase {
     random().nextBytes(payload.bytes);
     payload.length = len;
     return payload;
+  }
+
+  @Override
+  protected void addRandomFields(Document doc) {
+    for (Options opts : validOptions()) {
+      FieldType ft = fieldType(opts);
+      final int numFields = random().nextInt(5);
+      for (int j = 0; j < numFields; ++j) {
+        doc.add(new Field("f_" + opts, TestUtil.randomSimpleString(random(), 2), ft));
+      }
+    }
   }
 
   // custom impl to test cases that are forbidden by the default OffsetAttribute impl

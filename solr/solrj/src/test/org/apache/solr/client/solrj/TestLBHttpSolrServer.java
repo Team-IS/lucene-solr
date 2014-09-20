@@ -28,9 +28,11 @@ import junit.framework.Assert;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.http.client.HttpClient;
+import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.apache.lucene.util.QuickPatchThreadsFilter;
+import org.apache.lucene.util.TestUtil;
 import org.apache.solr.SolrIgnoredThreadsFilter;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
@@ -91,7 +93,7 @@ public class TestLBHttpSolrServer extends SolrTestCaseJ4 {
     httpClient = HttpClientUtil.createClient(null);
     HttpClientUtil.setConnectionTimeout(httpClient,  1000);
     for (int i = 0; i < solr.length; i++) {
-      solr[i] = new SolrInstance("solr/collection1" + i, 0);
+      solr[i] = new SolrInstance("solr/collection1" + i, createTempDir("instance-" + i).toFile(), 0);
       solr[i].setUp();
       solr[i].startJetty();
       addDocs(solr[i]);
@@ -121,7 +123,9 @@ public class TestLBHttpSolrServer extends SolrTestCaseJ4 {
   @Override
   public void tearDown() throws Exception {
     for (SolrInstance aSolr : solr) {
-      aSolr.tearDown();
+      if (aSolr != null)  {
+        aSolr.tearDown();
+      }
     }
     httpClient.getConnectionManager().shutdown();
     super.tearDown();
@@ -249,9 +253,13 @@ public class TestLBHttpSolrServer extends SolrTestCaseJ4 {
     int port;
     JettySolrRunner jetty;
 
-    public SolrInstance(String name, int port) {
+    public SolrInstance(String name, File homeDir, int port) {
       this.name = name;
+      this.homeDir = homeDir;
       this.port = port;
+
+      dataDir = new File(homeDir + "/collection1", "data");
+      confDir = new File(homeDir + "/collection1", "conf");
     }
 
     public String getHomeDir() {
@@ -284,14 +292,6 @@ public class TestLBHttpSolrServer extends SolrTestCaseJ4 {
 
 
     public void setUp() throws Exception {
-      File home = new File(LuceneTestCase.TEMP_DIR,
-              getClass().getName() + "-" + System.currentTimeMillis());
-
-
-      homeDir = new File(home, name);
-      dataDir = new File(homeDir + "/collection1", "data");
-      confDir = new File(homeDir + "/collection1", "conf");
-
       homeDir.mkdirs();
       dataDir.mkdirs();
       confDir.mkdirs();
@@ -302,20 +302,16 @@ public class TestLBHttpSolrServer extends SolrTestCaseJ4 {
       FileUtils.copyFile(SolrTestCaseJ4.getFile(getSolrConfigFile()), f);
       f = new File(confDir, "schema.xml");
       FileUtils.copyFile(SolrTestCaseJ4.getFile(getSchemaFile()), f);
-
     }
 
     public void tearDown() throws Exception {
-      try {
-        jetty.stop();
-      } catch (Exception e) {
-      }
-      AbstractSolrTestCase.recurseDelete(homeDir);
+      if (jetty != null) jetty.stop();
+      IOUtils.rm(homeDir.toPath());
     }
 
     public void startJetty() throws Exception {
       jetty = new JettySolrRunner(getHomeDir(), "/solr", port, "bad_solrconfig.xml", null, true, null, sslConfig);
-      System.setProperty("solr.data.dir", getDataDir());
+      jetty.setDataDir(getDataDir());
       jetty.start();
       int newPort = jetty.getLocalPort();
       if (port != 0 && newPort != port) {

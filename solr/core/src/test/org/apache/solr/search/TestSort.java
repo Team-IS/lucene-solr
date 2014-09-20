@@ -21,7 +21,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 import org.apache.lucene.analysis.core.SimpleAnalyzer;
@@ -32,14 +34,16 @@ import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.BitsFilteredDocIdSet;
 import org.apache.lucene.search.Collector;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.Filter;
+import org.apache.lucene.search.FilterLeafCollector;
+import org.apache.lucene.search.FilterCollector;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.ScoreDoc;
-import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.SortField.Type;
@@ -47,6 +51,7 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TopFieldCollector;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.RAMDirectory;
+import org.apache.lucene.uninverting.UninvertingReader;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.TestUtil;
@@ -183,7 +188,7 @@ public class TestSort extends SolrTestCaseJ4 {
     for (int iterCnt = 0; iterCnt<iter; iterCnt++) {
       IndexWriter iw = new IndexWriter(
           dir,
-          new IndexWriterConfig(TEST_VERSION_CURRENT, new SimpleAnalyzer(TEST_VERSION_CURRENT)).
+          new IndexWriterConfig(new SimpleAnalyzer()).
               setOpenMode(IndexWriterConfig.OpenMode.CREATE)
       );
       final MyDoc[] mydocs = new MyDoc[ndocs];
@@ -218,8 +223,11 @@ public class TestSort extends SolrTestCaseJ4 {
       }
       iw.close();
 
+      Map<String,UninvertingReader.Type> mapping = new HashMap<>();
+      mapping.put("f", UninvertingReader.Type.SORTED);
+      mapping.put("f2", UninvertingReader.Type.SORTED);
 
-      DirectoryReader reader = DirectoryReader.open(dir);
+      DirectoryReader reader = UninvertingReader.wrap(DirectoryReader.open(dir), mapping);
       IndexSearcher searcher = new IndexSearcher(reader);
       // System.out.println("segments="+searcher.getIndexReader().getSequentialSubReaders().length);
       assertTrue(reader.leaves().size() > 1);
@@ -265,30 +273,21 @@ public class TestSort extends SolrTestCaseJ4 {
 
         final List<MyDoc> collectedDocs = new ArrayList<>();
         // delegate and collect docs ourselves
-        Collector myCollector = new Collector() {
-          int docBase;
+        Collector myCollector = new FilterCollector(topCollector) {
 
           @Override
-          public void setScorer(Scorer scorer) throws IOException {
-            topCollector.setScorer(scorer);
+          public LeafCollector getLeafCollector(AtomicReaderContext context)
+              throws IOException {
+            final int docBase = context.docBase;
+            return new FilterLeafCollector(super.getLeafCollector(context)) {
+              @Override
+              public void collect(int doc) throws IOException {
+                super.collect(doc);
+                collectedDocs.add(mydocs[docBase + doc]);
+              }
+            };
           }
 
-          @Override
-          public void collect(int doc) throws IOException {
-            topCollector.collect(doc);
-            collectedDocs.add(mydocs[doc + docBase]);
-          }
-
-          @Override
-          public void setNextReader(AtomicReaderContext context) throws IOException {
-            topCollector.setNextReader(context);
-            docBase = context.docBase;
-          }
-
-          @Override
-          public boolean acceptsDocsOutOfOrder() {
-            return topCollector.acceptsDocsOutOfOrder();
-          }
         };
 
         searcher.search(new MatchAllDocsQuery(), filt, myCollector);

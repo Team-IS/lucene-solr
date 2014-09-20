@@ -33,16 +33,22 @@ import org.apache.lucene.index.SegmentInfo;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.AlreadyClosedException;
+import org.apache.lucene.store.BufferedChecksumIndexInput;
+import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.StringHelper;
-import org.apache.lucene.util.UnicodeUtil;
+
 import static org.apache.lucene.codecs.simpletext.SimpleTextTermVectorsWriter.*;
 
 /**
@@ -52,10 +58,16 @@ import static org.apache.lucene.codecs.simpletext.SimpleTextTermVectorsWriter.*;
  * @lucene.experimental
  */
 public class SimpleTextTermVectorsReader extends TermVectorsReader {
+
+  private static final long BASE_RAM_BYTES_USED =
+        RamUsageEstimator.shallowSizeOfInstance(SimpleTextTermVectorsReader.class)
+      + RamUsageEstimator.shallowSizeOfInstance(BytesRef.class)
+      + RamUsageEstimator.shallowSizeOfInstance(CharsRef.class);
+
   private long offsets[]; /* docid -> offset in .vec file */
   private IndexInput in;
-  private BytesRef scratch = new BytesRef();
-  private CharsRef scratchUTF16 = new CharsRef();
+  private BytesRefBuilder scratch = new BytesRefBuilder();
+  private CharsRefBuilder scratchUTF16 = new CharsRefBuilder();
   
   public SimpleTextTermVectorsReader(Directory directory, SegmentInfo si, IOContext context) throws IOException {
     boolean success = false;
@@ -82,15 +94,17 @@ public class SimpleTextTermVectorsReader extends TermVectorsReader {
   // vectors file in entirety up-front and save the offsets 
   // so we can seek to the data later.
   private void readIndex(int maxDoc) throws IOException {
+    ChecksumIndexInput input = new BufferedChecksumIndexInput(in);
     offsets = new long[maxDoc];
     int upto = 0;
-    while (!scratch.equals(END)) {
-      readLine();
-      if (StringHelper.startsWith(scratch, DOC)) {
-        offsets[upto] = in.getFilePointer();
+    while (!scratch.get().equals(END)) {
+      SimpleTextUtil.readLine(input, scratch);
+      if (StringHelper.startsWith(scratch.get(), DOC)) {
+        offsets[upto] = input.getFilePointer();
         upto++;
       }
     }
+    SimpleTextUtil.checkFooter(input);
     assert upto == offsets.length;
   }
   
@@ -99,54 +113,54 @@ public class SimpleTextTermVectorsReader extends TermVectorsReader {
     SortedMap<String,SimpleTVTerms> fields = new TreeMap<>();
     in.seek(offsets[doc]);
     readLine();
-    assert StringHelper.startsWith(scratch, NUMFIELDS);
+    assert StringHelper.startsWith(scratch.get(), NUMFIELDS);
     int numFields = parseIntAt(NUMFIELDS.length);
     if (numFields == 0) {
       return null; // no vectors for this doc
     }
     for (int i = 0; i < numFields; i++) {
       readLine();
-      assert StringHelper.startsWith(scratch, FIELD);
+      assert StringHelper.startsWith(scratch.get(), FIELD);
       // skip fieldNumber:
       parseIntAt(FIELD.length);
       
       readLine();
-      assert StringHelper.startsWith(scratch, FIELDNAME);
+      assert StringHelper.startsWith(scratch.get(), FIELDNAME);
       String fieldName = readString(FIELDNAME.length, scratch);
       
       readLine();
-      assert StringHelper.startsWith(scratch, FIELDPOSITIONS);
+      assert StringHelper.startsWith(scratch.get(), FIELDPOSITIONS);
       boolean positions = Boolean.parseBoolean(readString(FIELDPOSITIONS.length, scratch));
       
       readLine();
-      assert StringHelper.startsWith(scratch, FIELDOFFSETS);
+      assert StringHelper.startsWith(scratch.get(), FIELDOFFSETS);
       boolean offsets = Boolean.parseBoolean(readString(FIELDOFFSETS.length, scratch));
       
       readLine();
-      assert StringHelper.startsWith(scratch, FIELDPAYLOADS);
+      assert StringHelper.startsWith(scratch.get(), FIELDPAYLOADS);
       boolean payloads = Boolean.parseBoolean(readString(FIELDPAYLOADS.length, scratch));
       
       readLine();
-      assert StringHelper.startsWith(scratch, FIELDTERMCOUNT);
+      assert StringHelper.startsWith(scratch.get(), FIELDTERMCOUNT);
       int termCount = parseIntAt(FIELDTERMCOUNT.length);
       
       SimpleTVTerms terms = new SimpleTVTerms(offsets, positions, payloads);
       fields.put(fieldName, terms);
       
+      BytesRefBuilder term = new BytesRefBuilder();
       for (int j = 0; j < termCount; j++) {
         readLine();
-        assert StringHelper.startsWith(scratch, TERMTEXT);
-        BytesRef term = new BytesRef();
-        int termLength = scratch.length - TERMTEXT.length;
+        assert StringHelper.startsWith(scratch.get(), TERMTEXT);
+        int termLength = scratch.length() - TERMTEXT.length;
         term.grow(termLength);
-        term.length = termLength;
-        System.arraycopy(scratch.bytes, scratch.offset+TERMTEXT.length, term.bytes, term.offset, termLength);
+        term.setLength(termLength);
+        System.arraycopy(scratch.bytes(), TERMTEXT.length, term.bytes(), 0, termLength);
         
         SimpleTVPostings postings = new SimpleTVPostings();
-        terms.terms.put(term, postings);
+        terms.terms.put(term.toBytesRef(), postings);
         
         readLine();
-        assert StringHelper.startsWith(scratch, TERMFREQ);
+        assert StringHelper.startsWith(scratch.get(), TERMFREQ);
         postings.freq = parseIntAt(TERMFREQ.length);
         
         if (positions || offsets) {
@@ -165,16 +179,16 @@ public class SimpleTextTermVectorsReader extends TermVectorsReader {
           for (int k = 0; k < postings.freq; k++) {
             if (positions) {
               readLine();
-              assert StringHelper.startsWith(scratch, POSITION);
+              assert StringHelper.startsWith(scratch.get(), POSITION);
               postings.positions[k] = parseIntAt(POSITION.length);
               if (payloads) {
                 readLine();
-                assert StringHelper.startsWith(scratch, PAYLOAD);
-                if (scratch.length - PAYLOAD.length == 0) {
+                assert StringHelper.startsWith(scratch.get(), PAYLOAD);
+                if (scratch.length() - PAYLOAD.length == 0) {
                   postings.payloads[k] = null;
                 } else {
-                  byte payloadBytes[] = new byte[scratch.length - PAYLOAD.length];
-                  System.arraycopy(scratch.bytes, scratch.offset+PAYLOAD.length, payloadBytes, 0, payloadBytes.length);
+                  byte payloadBytes[] = new byte[scratch.length() - PAYLOAD.length];
+                  System.arraycopy(scratch.bytes(), PAYLOAD.length, payloadBytes, 0, payloadBytes.length);
                   postings.payloads[k] = new BytesRef(payloadBytes);
                 }
               }
@@ -182,11 +196,11 @@ public class SimpleTextTermVectorsReader extends TermVectorsReader {
             
             if (offsets) {
               readLine();
-              assert StringHelper.startsWith(scratch, STARTOFFSET);
+              assert StringHelper.startsWith(scratch.get(), STARTOFFSET);
               postings.startOffsets[k] = parseIntAt(STARTOFFSET.length);
               
               readLine();
-              assert StringHelper.startsWith(scratch, ENDOFFSET);
+              assert StringHelper.startsWith(scratch.get(), ENDOFFSET);
               postings.endOffsets[k] = parseIntAt(ENDOFFSET.length);
             }
           }
@@ -219,12 +233,12 @@ public class SimpleTextTermVectorsReader extends TermVectorsReader {
   }
   
   private int parseIntAt(int offset) {
-    UnicodeUtil.UTF8toUTF16(scratch.bytes, scratch.offset+offset, scratch.length-offset, scratchUTF16);
-    return ArrayUtil.parseInt(scratchUTF16.chars, 0, scratchUTF16.length);
+    scratchUTF16.copyUTF8Bytes(scratch.bytes(), offset, scratch.length()-offset);
+    return ArrayUtil.parseInt(scratchUTF16.chars(), 0, scratchUTF16.length());
   }
   
-  private String readString(int offset, BytesRef scratch) {
-    UnicodeUtil.UTF8toUTF16(scratch.bytes, scratch.offset+offset, scratch.length-offset, scratchUTF16);
+  private String readString(int offset, BytesRefBuilder scratch) {
+    scratchUTF16.copyUTF8Bytes(scratch.bytes(), offset, scratch.length()-offset);
     return scratchUTF16.toString();
   }
   
@@ -535,6 +549,19 @@ public class SimpleTextTermVectorsReader extends TermVectorsReader {
 
   @Override
   public long ramBytesUsed() {
-    return 0;
+    return BASE_RAM_BYTES_USED + RamUsageEstimator.sizeOf(offsets);
   }
+
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.emptyList();
+  }
+  
+  @Override
+  public String toString() {
+    return getClass().getSimpleName();
+  }
+
+  @Override
+  public void checkIntegrity() throws IOException {}
 }

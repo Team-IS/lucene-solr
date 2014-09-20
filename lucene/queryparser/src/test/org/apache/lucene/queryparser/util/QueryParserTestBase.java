@@ -47,7 +47,7 @@ import org.apache.lucene.search.*;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.automaton.BasicAutomata;
+import org.apache.lucene.util.automaton.Automata;
 import org.apache.lucene.util.automaton.CharacterRunAutomaton;
 import org.apache.lucene.util.automaton.RegExp;
 import org.junit.AfterClass;
@@ -868,7 +868,7 @@ public abstract class QueryParserTestBase extends LuceneTestCase {
 
   public void testBoost()
     throws Exception {
-    CharacterRunAutomaton stopWords = new CharacterRunAutomaton(BasicAutomata.makeString("on"));
+    CharacterRunAutomaton stopWords = new CharacterRunAutomaton(Automata.makeString("on"));
     Analyzer oneStopAnalyzer = new MockAnalyzer(random(), MockTokenizer.SIMPLE, true, stopWords);
     CommonQueryParserConfiguration qp = getParserConfig(oneStopAnalyzer);
     Query q = getQuery("on^1.0",qp);
@@ -941,7 +941,7 @@ public abstract class QueryParserTestBase extends LuceneTestCase {
 // Todo: convert this from DateField to DateUtil
 //  public void testLocalDateFormat() throws IOException, ParseException {
 //    Directory ramDir = newDirectory();
-//    IndexWriter iw = new IndexWriter(ramDir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random, MockTokenizer.WHITESPACE, false)));
+//    IndexWriter iw = new IndexWriter(ramDir, newIndexWriterConfig(new MockAnalyzer(random, MockTokenizer.WHITESPACE, false)));
 //    addDateDoc("a", 2005, 12, 2, 10, 15, 33, iw);
 //    addDateDoc("b", 2005, 12, 4, 22, 15, 00, iw);
 //    iw.close();
@@ -1089,7 +1089,7 @@ public abstract class QueryParserTestBase extends LuceneTestCase {
   public void testPositionIncrements() throws Exception {
     Directory dir = newDirectory();
     Analyzer a = new MockAnalyzer(random(), MockTokenizer.SIMPLE, true, MockTokenFilter.ENGLISH_STOPSET);
-    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, a));
+    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(a));
     Document doc = new Document();
     doc.add(newTextField("field", "the wizard of ozzy", Field.Store.NO));
     w.addDocument(doc);

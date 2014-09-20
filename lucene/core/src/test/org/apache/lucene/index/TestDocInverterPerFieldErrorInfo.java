@@ -18,7 +18,6 @@ package org.apache.lucene.index;
  */
 
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.analysis.TokenFilter;
 import org.apache.lucene.analysis.Tokenizer;
@@ -26,6 +25,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.PrintStreamInfoStream;
 import org.junit.Test;
@@ -68,9 +68,9 @@ public class TestDocInverterPerFieldErrorInfo extends LuceneTestCase {
   public void testInfoStreamGetsFieldName() throws Exception {
     Directory dir = newDirectory();
     IndexWriter writer;
-    IndexWriterConfig c = new IndexWriterConfig(TEST_VERSION_CURRENT, new ThrowingAnalyzer());
+    IndexWriterConfig c = new IndexWriterConfig(new ThrowingAnalyzer());
     final ByteArrayOutputStream infoBytes = new ByteArrayOutputStream();
-    PrintStream infoPrintStream = new PrintStream(infoBytes, true, "utf-8");
+    PrintStream infoPrintStream = new PrintStream(infoBytes, true, IOUtils.UTF_8);
     PrintStreamInfoStream printStreamInfoStream = new PrintStreamInfoStream(infoPrintStream);
     c.setInfoStream(printStreamInfoStream);
     writer = new IndexWriter(dir, c);
@@ -81,7 +81,7 @@ public class TestDocInverterPerFieldErrorInfo extends LuceneTestCase {
       fail("Failed to fail.");
     } catch(BadNews badNews) {
       infoPrintStream.flush();
-      String infoStream = new String(infoBytes.toByteArray(), "utf-8");
+      String infoStream = new String(infoBytes.toByteArray(), IOUtils.UTF_8);
       assertTrue(infoStream.contains("distinctiveFieldName"));
     }
 
@@ -93,9 +93,9 @@ public class TestDocInverterPerFieldErrorInfo extends LuceneTestCase {
   public void testNoExtraNoise() throws Exception {
     Directory dir = newDirectory();
     IndexWriter writer;
-    IndexWriterConfig c = new IndexWriterConfig(TEST_VERSION_CURRENT, new ThrowingAnalyzer());
+    IndexWriterConfig c = new IndexWriterConfig(new ThrowingAnalyzer());
     final ByteArrayOutputStream infoBytes = new ByteArrayOutputStream();
-    PrintStream infoPrintStream = new PrintStream(infoBytes, true, "utf-8");
+    PrintStream infoPrintStream = new PrintStream(infoBytes, true, IOUtils.UTF_8);
     PrintStreamInfoStream printStreamInfoStream = new PrintStreamInfoStream(infoPrintStream);
     c.setInfoStream(printStreamInfoStream);
     writer = new IndexWriter(dir, c);
@@ -107,7 +107,7 @@ public class TestDocInverterPerFieldErrorInfo extends LuceneTestCase {
       fail("Unwanted exception");
     }
     infoPrintStream.flush();
-    String infoStream = new String(infoBytes.toByteArray(), "utf-8");
+    String infoStream = new String(infoBytes.toByteArray(), IOUtils.UTF_8);
     assertFalse(infoStream.contains("boringFieldName"));
 
     writer.close();

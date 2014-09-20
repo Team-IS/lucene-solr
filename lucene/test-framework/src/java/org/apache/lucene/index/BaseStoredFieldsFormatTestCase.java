@@ -18,6 +18,7 @@ package org.apache.lucene.index;
  */
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -31,7 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.StoredFieldsFormat;
-import org.apache.lucene.codecs.lucene46.Lucene46Codec;
+import org.apache.lucene.codecs.lucene410.Lucene410Codec;
 import org.apache.lucene.codecs.simpletext.SimpleTextCodec;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.DoubleField;
@@ -42,10 +43,10 @@ import org.apache.lucene.document.FieldType.NumericType;
 import org.apache.lucene.document.FloatField;
 import org.apache.lucene.document.IntField;
 import org.apache.lucene.document.LongField;
+import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.search.FieldCache;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.NumericRangeQuery;
 import org.apache.lucene.search.Query;
@@ -56,8 +57,6 @@ import org.apache.lucene.store.MMapDirectory;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.MockDirectoryWrapper.Throttling;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.TestUtil;
 
 import com.carrotsearch.randomizedtesting.generators.RandomInts;
@@ -69,32 +68,20 @@ import com.carrotsearch.randomizedtesting.generators.RandomPicks;
  * uses it and extend this class and override {@link #getCodec()}.
  * @lucene.experimental
  */
-public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
-  private Codec savedCodec;
-
-  /**
-   * Returns the Codec to run tests against
-   */
-  protected abstract Codec getCodec();
+public abstract class BaseStoredFieldsFormatTestCase extends BaseIndexFileFormatTestCase {
 
   @Override
-  public void setUp() throws Exception {
-    super.setUp();
-    // set the default codec, so adding test cases to this isn't fragile
-    savedCodec = Codec.getDefault();
-    Codec.setDefault(getCodec());
+  protected void addRandomFields(Document d) {
+    final int numValues = random().nextInt(3);
+    for (int i = 0; i < numValues; ++i) {
+      d.add(new StoredField("f", TestUtil.randomSimpleString(random(), 100)));
+    }
   }
 
-  @Override
-  public void tearDown() throws Exception {
-    Codec.setDefault(savedCodec); // restore
-    super.tearDown();
-  }
-  
   public void testRandomStoredFields() throws IOException {
     Directory dir = newDirectory();
     Random rand = random();
-    RandomIndexWriter w = new RandomIndexWriter(rand, dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMaxBufferedDocs(TestUtil.nextInt(rand, 5, 20)));
+    RandomIndexWriter w = new RandomIndexWriter(rand, dir, newIndexWriterConfig(new MockAnalyzer(random())).setMaxBufferedDocs(TestUtil.nextInt(rand, 5, 20)));
     //w.w.setNoCFSRatio(0.0);
     final int docCount = atLeast(200);
     final int fieldCount = TestUtil.nextInt(rand, 1, 5);
@@ -190,7 +177,7 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
   // LUCENE-1727: make sure doc fields are stored in order
   public void testStoredFieldsOrder() throws Throwable {
     Directory d = newDirectory();
-    IndexWriter w = new IndexWriter(d, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter w = new IndexWriter(d, newIndexWriterConfig(new MockAnalyzer(random())));
     Document doc = new Document();
 
     FieldType customType = new FieldType();
@@ -225,7 +212,7 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
   // LUCENE-1219
   public void testBinaryFieldOffsetLength() throws IOException {
     Directory dir = newDirectory();
-    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
     byte[] b = new byte[50];
     for(int i=0;i<50;i++)
       b[i] = (byte) (i+77);
@@ -302,6 +289,7 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
       FieldType ft = new FieldType(IntField.TYPE_STORED);
       ft.setNumericPrecisionStep(Integer.MAX_VALUE);
       doc.add(new IntField("id", id, ft));
+      doc.add(new NumericDocValuesField("id", id));
       w.addDocument(doc);
     }
     final DirectoryReader r = w.getReader();
@@ -311,12 +299,12 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
 
     for(AtomicReaderContext ctx : r.leaves()) {
       final AtomicReader sub = ctx.reader();
-      final FieldCache.Ints ids = FieldCache.DEFAULT.getInts(sub, "id", false);
+      final NumericDocValues ids = DocValues.getNumeric(sub, "id");
       for(int docID=0;docID<sub.numDocs();docID++) {
         final StoredDocument doc = sub.document(docID);
         final Field f = (Field) doc.getField("nf");
         assertTrue("got f=" + f, f instanceof StoredField);
-        assertEquals(answers[ids.get(docID)], f.numericValue());
+        assertEquals(answers[(int) ids.get(docID)], f.numericValue());
       }
     }
     r.close();
@@ -342,7 +330,7 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
   
   public void testReadSkip() throws IOException {
     Directory dir = newDirectory();
-    IndexWriterConfig iwConf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwConf = newIndexWriterConfig(new MockAnalyzer(random()));
     iwConf.setMaxBufferedDocs(RandomInts.randomIntBetween(random(), 2, 30));
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwConf);
     
@@ -351,7 +339,7 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
     ft.freeze();
 
     final String string = TestUtil.randomSimpleString(random(), 50);
-    final byte[] bytes = string.getBytes("UTF-8");
+    final byte[] bytes = string.getBytes(StandardCharsets.UTF_8);
     final long l = random().nextBoolean() ? random().nextInt(42) : random().nextLong();
     final int i = random().nextBoolean() ? random().nextInt(42) : random().nextInt();
     final float f = random().nextFloat();
@@ -395,7 +383,7 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
   
   public void testEmptyDocs() throws IOException {
     Directory dir = newDirectory();
-    IndexWriterConfig iwConf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwConf = newIndexWriterConfig(new MockAnalyzer(random()));
     iwConf.setMaxBufferedDocs(RandomInts.randomIntBetween(random(), 2, 30));
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwConf);
     
@@ -420,7 +408,7 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
   
   public void testConcurrentReads() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig iwConf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwConf = newIndexWriterConfig(new MockAnalyzer(random()));
     iwConf.setMaxBufferedDocs(RandomInts.randomIntBetween(random(), 2, 30));
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwConf);
     
@@ -503,14 +491,14 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
     // get another codec, other than the default: so we are merging segments across different codecs
     final Codec otherCodec;
     if ("SimpleText".equals(Codec.getDefault().getName())) {
-      otherCodec = new Lucene46Codec();
+      otherCodec = new Lucene410Codec();
     } else {
       otherCodec = new SimpleTextCodec();
     }
     Directory dir = newDirectory();
-    IndexWriterConfig iwConf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwConf = newIndexWriterConfig(new MockAnalyzer(random()));
     iwConf.setMaxBufferedDocs(RandomInts.randomIntBetween(random(), 2, 30));
-    RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwConf.clone());
+    RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwConf);
     
     final int docCount = atLeast(200);
     final byte[][][] data = new byte [docCount][][];
@@ -543,13 +531,15 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
       iw.w.addDocument(doc);
       if (random().nextBoolean() && (i % (data.length / 10) == 0)) {
         iw.w.close();
+        IndexWriterConfig iwConfNew = newIndexWriterConfig(new MockAnalyzer(random()));
         // test merging against a non-compressing codec
         if (iwConf.getCodec() == otherCodec) {
-          iwConf.setCodec(Codec.getDefault());
+          iwConfNew.setCodec(Codec.getDefault());
         } else {
-          iwConf.setCodec(otherCodec);
+          iwConfNew.setCodec(otherCodec);
         }
-        iw = new RandomIndexWriter(random(), dir, iwConf.clone());
+        iwConf = iwConfNew;
+        iw = new RandomIndexWriter(random(), dir, iwConf);
       }
     }
 
@@ -598,8 +588,8 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
     // for this test we force a FS dir
     // we can't just use newFSDirectory, because this test doesn't really index anything.
     // so if we get NRTCachingDir+SimpleText, we make massive stored fields and OOM (LUCENE-4484)
-    Directory dir = new MockDirectoryWrapper(random(), new MMapDirectory(TestUtil.getTempDir("testBigDocuments")));
-    IndexWriterConfig iwConf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    Directory dir = new MockDirectoryWrapper(random(), new MMapDirectory(createTempDir("testBigDocuments")));
+    IndexWriterConfig iwConf = newIndexWriterConfig(new MockAnalyzer(random()));
     iwConf.setMaxBufferedDocs(RandomInts.randomIntBetween(random(), 2, 30));
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwConf);
 
@@ -660,4 +650,30 @@ public abstract class BaseStoredFieldsFormatTestCase extends LuceneTestCase {
     iw.close();
     dir.close();
   }
+
+  public void testBulkMergeWithDeletes() throws IOException {
+    final int numDocs = atLeast(200);
+    Directory dir = newDirectory();
+    RandomIndexWriter w = new RandomIndexWriter(random(), dir, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(NoMergePolicy.INSTANCE));
+    for (int i = 0; i < numDocs; ++i) {
+      Document doc = new Document();
+      doc.add(new StringField("id", Integer.toString(i), Store.YES));
+      doc.add(new StoredField("f", TestUtil.randomSimpleString(random())));
+      w.addDocument(doc);
+    }
+    final int deleteCount = TestUtil.nextInt(random(), 5, numDocs);
+    for (int i = 0; i < deleteCount; ++i) {
+      final int id = random().nextInt(numDocs);
+      w.deleteDocuments(new Term("id", Integer.toString(id)));
+    }
+    w.commit();
+    w.close();
+    w = new RandomIndexWriter(random(), dir);
+    w.forceMerge(TestUtil.nextInt(random(), 1, 3));
+    w.commit();
+    w.close();
+    TestUtil.checkIndex(dir);
+    dir.close();
+  }
+
 }

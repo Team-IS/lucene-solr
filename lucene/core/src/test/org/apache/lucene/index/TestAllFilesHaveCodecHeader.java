@@ -21,12 +21,14 @@ import java.io.IOException;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.codecs.CodecUtil;
-import org.apache.lucene.codecs.lucene46.Lucene46Codec;
+import org.apache.lucene.codecs.lucene410.Lucene410Codec;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.store.CompoundFileDirectory;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
@@ -37,16 +39,23 @@ import org.apache.lucene.util.TestUtil;
 public class TestAllFilesHaveCodecHeader extends LuceneTestCase {
   public void test() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    conf.setCodec(new Lucene46Codec());
-    // riw should sometimes create docvalues fields, etc
+
+    if (dir instanceof MockDirectoryWrapper) {
+      // Else we might remove .cfe but not the corresponding .cfs, causing false exc when trying to verify headers:
+      ((MockDirectoryWrapper) dir).setEnableVirusScanner(false);
+    }
+
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
+    conf.setCodec(new Lucene410Codec());
     RandomIndexWriter riw = new RandomIndexWriter(random(), dir, conf);
     Document doc = new Document();
     // these fields should sometimes get term vectors, etc
     Field idField = newStringField("id", "", Field.Store.NO);
     Field bodyField = newTextField("body", "", Field.Store.NO);
+    Field dvField = new NumericDocValuesField("dv", 5);
     doc.add(idField);
     doc.add(bodyField);
+    doc.add(dvField);
     for (int i = 0; i < 100; i++) {
       idField.setStringValue(Integer.toString(i));
       bodyField.setStringValue(TestUtil.randomUnicodeString(random()));
@@ -54,6 +63,10 @@ public class TestAllFilesHaveCodecHeader extends LuceneTestCase {
       if (random().nextInt(7) == 0) {
         riw.commit();
       }
+      // TODO: we should make a new format with a clean header...
+      // if (random().nextInt(20) == 0) {
+      //  riw.deleteDocuments(new Term("id", Integer.toString(i)));
+      // }
     }
     riw.close();
     checkHeaders(dir);
@@ -62,8 +75,8 @@ public class TestAllFilesHaveCodecHeader extends LuceneTestCase {
   
   private void checkHeaders(Directory dir) throws IOException {
     for (String file : dir.listAll()) {
-      if (file.equals(IndexFileNames.SEGMENTS_GEN)) {
-        continue; // segments.gen has no header, thats ok
+      if (file.equals(IndexWriter.WRITE_LOCK_NAME)) {
+        continue; // write.lock has no header, thats ok
       }
       if (file.endsWith(IndexFileNames.COMPOUND_FILE_EXTENSION)) {
         CompoundFileDirectory cfsDir = new CompoundFileDirectory(dir, file, newIOContext(random()), false);

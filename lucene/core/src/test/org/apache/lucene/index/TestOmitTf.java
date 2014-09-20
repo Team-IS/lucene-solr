@@ -29,15 +29,16 @@ import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.CollectionStatistics;
-import org.apache.lucene.search.Collector;
 import org.apache.lucene.search.Explanation;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermStatistics;
 import org.apache.lucene.search.similarities.TFIDFSimilarity;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
 
@@ -73,7 +74,7 @@ public class TestOmitTf extends LuceneTestCase {
   public void testOmitTermFreqAndPositions() throws Exception {
     Directory ram = newDirectory();
     Analyzer analyzer = new MockAnalyzer(random());
-    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig( TEST_VERSION_CURRENT, analyzer));
+    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig(analyzer));
     Document d = new Document();
         
     // this field will have Tf
@@ -120,7 +121,7 @@ public class TestOmitTf extends LuceneTestCase {
     Analyzer analyzer = new MockAnalyzer(random());
     IndexWriter writer = new IndexWriter(
         ram,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer).
+        newIndexWriterConfig(analyzer).
             setMaxBufferedDocs(3).
             setMergePolicy(newLogMergePolicy(2))
     );
@@ -173,7 +174,7 @@ public class TestOmitTf extends LuceneTestCase {
     Analyzer analyzer = new MockAnalyzer(random());
     IndexWriter writer = new IndexWriter(
         ram,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer).
+        newIndexWriterConfig(analyzer).
             setMaxBufferedDocs(10).
             setMergePolicy(newLogMergePolicy(2))
     );
@@ -219,9 +220,14 @@ public class TestOmitTf extends LuceneTestCase {
   // Verifies no *.prx exists when all fields omit term freq:
   public void testNoPrxFile() throws Throwable {
     Directory ram = newDirectory();
+    if (ram instanceof MockDirectoryWrapper) {
+      // we verify some files get deleted
+      ((MockDirectoryWrapper)ram).setEnableVirusScanner(false);
+    }
     Analyzer analyzer = new MockAnalyzer(random());
-    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig(
-                                                                   TEST_VERSION_CURRENT, analyzer).setMaxBufferedDocs(3).setMergePolicy(newLogMergePolicy()));
+    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig(analyzer)
+                                                .setMaxBufferedDocs(3)
+                                                .setMergePolicy(newLogMergePolicy()));
     LogMergePolicy lmp = (LogMergePolicy) writer.getConfig().getMergePolicy();
     lmp.setMergeFactor(2);
     lmp.setNoCFSRatio(0.0);
@@ -261,10 +267,10 @@ public class TestOmitTf extends LuceneTestCase {
     Analyzer analyzer = new MockAnalyzer(random());
     IndexWriter writer = new IndexWriter(
         dir,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer).
-            setMaxBufferedDocs(2).
-            setSimilarity(new SimpleSimilarity()).
-            setMergePolicy(newLogMergePolicy(2))
+        newIndexWriterConfig(analyzer)
+            .setMaxBufferedDocs(2)
+            .setSimilarity(new SimpleSimilarity())
+            .setMergePolicy(newLogMergePolicy(2))
     );
         
     StringBuilder sb = new StringBuilder(265);
@@ -414,13 +420,11 @@ public class TestOmitTf extends LuceneTestCase {
     dir.close();
   }
      
-  public static class CountingHitCollector extends Collector {
+  public static class CountingHitCollector extends SimpleCollector {
     static int count=0;
     static int sum=0;
     private int docBase = -1;
     CountingHitCollector(){count=0;sum=0;}
-    @Override
-    public void setScorer(Scorer scorer) throws IOException {}
     @Override
     public void collect(int doc) throws IOException {
       count++;
@@ -431,7 +435,7 @@ public class TestOmitTf extends LuceneTestCase {
     public static int getSum() { return sum; }
     
     @Override
-    public void setNextReader(AtomicReaderContext context) {
+    protected void doSetNextReader(AtomicReaderContext context) throws IOException {
       docBase = context.docBase;
     }
     @Override
@@ -444,7 +448,7 @@ public class TestOmitTf extends LuceneTestCase {
   public void testStats() throws Exception {
     Directory dir = newDirectory();
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+        newIndexWriterConfig(new MockAnalyzer(random())));
     Document doc = new Document();
     FieldType ft = new FieldType(TextField.TYPE_NOT_STORED);
     ft.setIndexOptions(IndexOptions.DOCS_ONLY);

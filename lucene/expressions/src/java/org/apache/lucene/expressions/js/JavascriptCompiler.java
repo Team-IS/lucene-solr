@@ -22,6 +22,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 import java.util.Arrays;
 import java.util.Collections;
@@ -253,8 +254,12 @@ public class JavascriptCompiler {
         
         gen.cast(Type.DOUBLE_TYPE, expected);
         break;
-      case JavascriptParser.NAMESPACE_ID:
+      case JavascriptParser.VARIABLE:
         int index;
+
+        // normalize quotes
+        text = normalizeQuotes(text);
+
         
         if (externalsMap.containsKey(text)) {
           index = externalsMap.get(text);
@@ -490,6 +495,46 @@ public class JavascriptCompiler {
       throw exception;
     }
   }
+
+  private static String normalizeQuotes(String text) {
+    StringBuilder out = new StringBuilder(text.length());
+    boolean inDoubleQuotes = false;
+    for (int i = 0; i < text.length(); ++i) {
+      char c = text.charAt(i);
+      if (c == '\\') {
+        c = text.charAt(++i);
+        if (c == '\\') {
+          out.append('\\'); // re-escape the backslash
+        }
+        // no escape for double quote
+      } else if (c == '\'') {
+        if (inDoubleQuotes) {
+          // escape in output
+          out.append('\\');
+        } else {
+          int j = findSingleQuoteStringEnd(text, i);
+          out.append(text, i, j); // copy up to end quote (leave end for append below)
+          i = j;
+        }
+      } else if (c == '"') {
+        c = '\''; // change beginning/ending doubles to singles
+        inDoubleQuotes = !inDoubleQuotes;
+      }
+      out.append(c);
+    }
+    return out.toString();
+  }
+
+  private static int findSingleQuoteStringEnd(String text, int start) {
+    ++start; // skip beginning
+    while (text.charAt(start) != '\'') {
+      if (text.charAt(start) == '\\') {
+        ++start; // blindly consume escape value
+      }
+      ++start;
+    }
+    return start;
+  }
   
   /** 
    * The default set of functions available to expressions.
@@ -503,7 +548,7 @@ public class JavascriptCompiler {
     try {
       final Properties props = new Properties();
       try (Reader in = IOUtils.getDecodingReader(JavascriptCompiler.class,
-        JavascriptCompiler.class.getSimpleName() + ".properties", IOUtils.CHARSET_UTF_8)) {
+        JavascriptCompiler.class.getSimpleName() + ".properties", StandardCharsets.UTF_8)) {
         props.load(in);
       }
       for (final String call : props.stringPropertyNames()) {

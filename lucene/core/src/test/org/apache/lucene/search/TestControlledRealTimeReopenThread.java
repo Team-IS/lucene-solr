@@ -47,9 +47,7 @@ import org.apache.lucene.store.NRTCachingDirectory;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.ThreadInterruptedException;
-import org.apache.lucene.util.Version;
 
 @SuppressCodecs({ "SimpleText", "Memory", "Direct" })
 public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearchingTestCase {
@@ -303,8 +301,8 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
    * LUCENE-3528 - NRTManager hangs in certain situations 
    */
   public void testThreadStarvationNoDeleteNRTReader() throws IOException, InterruptedException {
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    conf.setMergePolicy(random().nextBoolean() ? NoMergePolicy.COMPOUND_FILES : NoMergePolicy.NO_COMPOUND_FILES);
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
+    conf.setMergePolicy(NoMergePolicy.INSTANCE);
     Directory d = newDirectory();
     final CountDownLatch latch = new CountDownLatch(1);
     final CountDownLatch signal = new CountDownLatch(1);
@@ -371,7 +369,8 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
     }
     thread.close();
     thread.join();
-    IOUtils.close(manager, _writer, d);
+    _writer.close();
+    IOUtils.close(manager, d);
   }
   
   public static class LatchedIndexWriter extends IndexWriter {
@@ -432,7 +431,7 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
 
   public void testListenerCalled() throws Exception {
     Directory dir = newDirectory();
-    IndexWriter iw = new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, null));
+    IndexWriter iw = new IndexWriter(dir, new IndexWriterConfig(null));
     final AtomicBoolean afterRefreshCalled = new AtomicBoolean(false);
     SearcherManager sm = new SearcherManager(iw, true, new SearcherFactory());
     sm.addListener(new ReferenceManager.RefreshListener() {
@@ -456,6 +455,8 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
     dir.close();
   }
 
+  // Relies on wall clock time, so it can easily false-fail when the machine is otherwise busy:
+  @AwaitsFix(bugUrl = "https://issues.apache.org/jira/browse/LUCENE-5737")
   // LUCENE-5461
   public void testCRTReopen() throws Exception {
     //test behaving badly
@@ -473,9 +474,9 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
     String content = builder.toString();
 
     final SnapshotDeletionPolicy sdp = new SnapshotDeletionPolicy(new KeepOnlyLastCommitDeletionPolicy());
-    final Directory dir = new NRTCachingDirectory(newFSDirectory(TestUtil.getTempDir("nrt")), 5, 128);
-    IndexWriterConfig config = new IndexWriterConfig(Version.LUCENE_46,
-                                                     new MockAnalyzer(random()));
+    final Directory dir = new NRTCachingDirectory(newFSDirectory(createTempDir("nrt")), 5, 128);
+    IndexWriterConfig config = new IndexWriterConfig(new MockAnalyzer(random()));
+    config.setCommitOnClose(true);
     config.setIndexDeletionPolicy(sdp);
     config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
     final IndexWriter iw = new IndexWriter(dir, config);
@@ -500,7 +501,7 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
                 for (String name : ic.getFileNames()) {
                   //distribute, and backup
                   //System.out.println(names);
-                  assertTrue(dir.fileExists(name));
+                  assertTrue(slowFileExists(dir, name));
                 }
               } catch (Exception e) {
                 throw new RuntimeException(e);

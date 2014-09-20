@@ -18,12 +18,16 @@ package org.apache.lucene.store;
  */
 
 import java.io.EOFException;
-import java.io.File;
 import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
 /** A straightforward implementation of {@link FSDirectory}
- *  using java.io.RandomAccessFile.  However, this class has
+ *  using {@link Files#newByteChannel(Path, java.nio.file.OpenOption...)}.  
+ *  However, this class has
  *  poor concurrent performance (multiple threads will
  *  bottleneck) as it synchronizes when multiple threads
  *  read from the same file.  It's usually better to use
@@ -37,7 +41,7 @@ public class SimpleFSDirectory extends FSDirectory {
    * ({@link NativeFSLockFactory});
    * @throws IOException if there is a low-level I/O error
    */
-  public SimpleFSDirectory(File path, LockFactory lockFactory) throws IOException {
+  public SimpleFSDirectory(Path path, LockFactory lockFactory) throws IOException {
     super(path, lockFactory);
   }
   
@@ -46,7 +50,7 @@ public class SimpleFSDirectory extends FSDirectory {
    * @param path the path of the directory
    * @throws IOException if there is a low-level I/O error
    */
-  public SimpleFSDirectory(File path) throws IOException {
+  public SimpleFSDirectory(Path path) throws IOException {
     super(path, null);
   }
 
@@ -54,45 +58,22 @@ public class SimpleFSDirectory extends FSDirectory {
   @Override
   public IndexInput openInput(String name, IOContext context) throws IOException {
     ensureOpen();
-    final File path = new File(directory, name);
-    RandomAccessFile raf = new RandomAccessFile(path, "r");
-    return new SimpleFSIndexInput("SimpleFSIndexInput(path=\"" + path.getPath() + "\")", raf, context);
-  }
-
-  @Override
-  public IndexInputSlicer createSlicer(final String name,
-      final IOContext context) throws IOException {
-    ensureOpen();
-    final File file = new File(getDirectory(), name);
-    final RandomAccessFile descriptor = new RandomAccessFile(file, "r");
-    return new IndexInputSlicer() {
-
-      @Override
-      public void close() throws IOException {
-        descriptor.close();
-      }
-
-      @Override
-      public IndexInput openSlice(String sliceDescription, long offset, long length) {
-        return new SimpleFSIndexInput("SimpleFSIndexInput(" + sliceDescription + " in path=\"" + file.getPath() + "\" slice=" + offset + ":" + (offset+length) + ")", descriptor, offset,
-            length, BufferedIndexInput.bufferSize(context));
-      }
-    };
+    Path path = directory.resolve(name);
+    SeekableByteChannel channel = Files.newByteChannel(path, StandardOpenOption.READ);
+    return new SimpleFSIndexInput("SimpleFSIndexInput(path=\"" + path + "\")", channel, context);
   }
 
   /**
-   * Reads bytes with {@link RandomAccessFile#seek(long)} followed by
-   * {@link RandomAccessFile#read(byte[], int, int)}.  
+   * Reads bytes with {@link SeekableByteChannel#read(ByteBuffer)}
    */
-  protected static class SimpleFSIndexInput extends BufferedIndexInput {
+  static final class SimpleFSIndexInput extends BufferedIndexInput {
     /**
-     * The maximum chunk size is 8192 bytes, because {@link RandomAccessFile} mallocs
-     * a native buffer outside of stack if the read buffer size is larger.
+     * The maximum chunk size for reads of 16384 bytes.
      */
-    private static final int CHUNK_SIZE = 8192;
+    private static final int CHUNK_SIZE = 16384;
     
-    /** the file channel we will read from */
-    protected final RandomAccessFile file;
+    /** the channel we will read from */
+    protected final SeekableByteChannel channel;
     /** is this instance a clone and hence does not own the file to close it */
     boolean isClone = false;
     /** start offset: non-zero in the slice case */
@@ -100,16 +81,18 @@ public class SimpleFSDirectory extends FSDirectory {
     /** end offset (start+length) */
     protected final long end;
     
-    public SimpleFSIndexInput(String resourceDesc, RandomAccessFile file, IOContext context) throws IOException {
+    private ByteBuffer byteBuf; // wraps the buffer for NIO
+
+    public SimpleFSIndexInput(String resourceDesc, SeekableByteChannel channel, IOContext context) throws IOException {
       super(resourceDesc, context);
-      this.file = file; 
+      this.channel = channel; 
       this.off = 0L;
-      this.end = file.length();
+      this.end = channel.size();
     }
     
-    public SimpleFSIndexInput(String resourceDesc, RandomAccessFile file, long off, long length, int bufferSize) {
+    public SimpleFSIndexInput(String resourceDesc, SeekableByteChannel channel, long off, long length, int bufferSize) {
       super(resourceDesc, bufferSize);
-      this.file = file;
+      this.channel = channel;
       this.off = off;
       this.end = off + length;
       this.isClone = true;
@@ -118,7 +101,7 @@ public class SimpleFSDirectory extends FSDirectory {
     @Override
     public void close() throws IOException {
       if (!isClone) {
-        file.close();
+        channel.close();
       }
     }
     
@@ -130,46 +113,69 @@ public class SimpleFSDirectory extends FSDirectory {
     }
     
     @Override
+    public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
+      if (offset < 0 || length < 0 || offset + length > this.length()) {
+        throw new IllegalArgumentException("slice() " + sliceDescription + " out of bounds: "  + this);
+      }
+      return new SimpleFSIndexInput(sliceDescription, channel, off + offset, length, getBufferSize());
+    }
+
+    @Override
     public final long length() {
       return end - off;
     }
-  
-    /** IndexInput methods */
-    @Override
-    protected void readInternal(byte[] b, int offset, int len)
-         throws IOException {
-      synchronized (file) {
-        long position = off + getFilePointer();
-        file.seek(position);
-        int total = 0;
 
-        if (position + len > end) {
+    @Override
+    protected void newBuffer(byte[] newBuffer) {
+      super.newBuffer(newBuffer);
+      byteBuf = ByteBuffer.wrap(newBuffer);
+    }
+
+    @Override
+    protected void readInternal(byte[] b, int offset, int len) throws IOException {
+      final ByteBuffer bb;
+
+      // Determine the ByteBuffer we should use
+      if (b == buffer) {
+        // Use our own pre-wrapped byteBuf:
+        assert byteBuf != null;
+        bb = byteBuf;
+        byteBuf.clear().position(offset);
+      } else {
+        bb = ByteBuffer.wrap(b, offset, len);
+      }
+
+      synchronized(channel) {
+        long pos = getFilePointer() + off;
+        
+        if (pos + len > end) {
           throw new EOFException("read past EOF: " + this);
         }
-
+               
         try {
-          while (total < len) {
-            final int toRead = Math.min(CHUNK_SIZE, len - total);
-            final int i = file.read(b, offset + total, toRead);
+          channel.position(pos);
+
+          int readLength = len;
+          while (readLength > 0) {
+            final int toRead = Math.min(CHUNK_SIZE, readLength);
+            bb.limit(bb.position() + toRead);
+            assert bb.remaining() == toRead;
+            final int i = channel.read(bb);
             if (i < 0) { // be defensive here, even though we checked before hand, something could have changed
-             throw new EOFException("read past EOF: " + this + " off: " + offset + " len: " + len + " total: " + total + " chunkLen: " + toRead + " end: " + end);
+              throw new EOFException("read past EOF: " + this + " off: " + offset + " len: " + len + " pos: " + pos + " chunkLen: " + toRead + " end: " + end);
             }
-            assert i > 0 : "RandomAccessFile.read with non zero-length toRead must always read at least one byte";
-            total += i;
+            assert i > 0 : "SeekableByteChannel.read with non zero-length bb.remaining() must always read at least one byte (Channel is in blocking mode, see spec of ReadableByteChannel)";
+            pos += i;
+            readLength -= i;
           }
-          assert total == len;
+          assert readLength == 0;
         } catch (IOException ioe) {
           throw new IOException(ioe.getMessage() + ": " + this, ioe);
         }
       }
     }
-  
+
     @Override
-    protected void seekInternal(long position) {
-    }
-    
-    boolean isFDValid() throws IOException {
-      return file.getFD().valid();
-    }
+    protected void seekInternal(long pos) throws IOException {}
   }
 }

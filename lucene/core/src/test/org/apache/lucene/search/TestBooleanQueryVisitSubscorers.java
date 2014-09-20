@@ -18,8 +18,10 @@ package org.apache.lucene.search;
  */
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -33,6 +35,7 @@ import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.Scorer.ChildScorer;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
@@ -53,7 +56,7 @@ public class TestBooleanQueryVisitSubscorers extends LuceneTestCase {
     super.setUp();
     analyzer = new MockAnalyzer(random());
     dir = newDirectory();
-    IndexWriterConfig config = newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer);
+    IndexWriterConfig config = newIndexWriterConfig(analyzer);
     config.setMergePolicy(newLogMergePolicy()); // we will use docids to validate
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir, config);
     writer.addDocument(doc("lucene", "lucene is a very popular search engine library"));
@@ -121,46 +124,45 @@ public class TestBooleanQueryVisitSubscorers extends LuceneTestCase {
     return collector.docCounts;
   }
   
-  static class MyCollector extends Collector {
-    
-    private TopDocsCollector<ScoreDoc> collector;
-    private int docBase;
+  static class MyCollector extends FilterCollector {
 
     public final Map<Integer,Integer> docCounts = new HashMap<>();
     private final Set<Scorer> tqsSet = new HashSet<>();
     
     MyCollector() {
-      collector = TopScoreDocCollector.create(10, true);
+      super(TopScoreDocCollector.create(10, true));
     }
 
-    @Override
-    public boolean acceptsDocsOutOfOrder() {
-      return false;
-    }
-
-    @Override
-    public void collect(int doc) throws IOException {
-      int freq = 0;
-      for(Scorer scorer : tqsSet) {
-        if (doc == scorer.docID()) {
-          freq += scorer.freq();
+    public LeafCollector getLeafCollector(AtomicReaderContext context)
+        throws IOException {
+      final int docBase = context.docBase;
+      return new FilterLeafCollector(super.getLeafCollector(context)) {
+        
+        @Override
+        public boolean acceptsDocsOutOfOrder() {
+          return false;
         }
-      }
-      docCounts.put(doc + docBase, freq);
-      collector.collect(doc);
-    }
-
-    @Override
-    public void setNextReader(AtomicReaderContext context) throws IOException {
-      this.docBase = context.docBase;
-      collector.setNextReader(context);
-    }
-
-    @Override
-    public void setScorer(Scorer scorer) throws IOException {
-      collector.setScorer(scorer);
-      tqsSet.clear();
-      fillLeaves(scorer, tqsSet);
+        
+        @Override
+        public void setScorer(Scorer scorer) throws IOException {
+          super.setScorer(scorer);
+          tqsSet.clear();
+          fillLeaves(scorer, tqsSet);
+        }
+        
+        @Override
+        public void collect(int doc) throws IOException {
+          int freq = 0;
+          for(Scorer scorer : tqsSet) {
+            if (doc == scorer.docID()) {
+              freq += scorer.freq();
+            }
+          }
+          docCounts.put(doc + docBase, freq);
+          super.collect(doc);
+        }
+        
+      };
     }
     
     private void fillLeaves(Scorer scorer, Set<Scorer> set) {
@@ -174,11 +176,104 @@ public class TestBooleanQueryVisitSubscorers extends LuceneTestCase {
     }
     
     public TopDocs topDocs(){
-      return collector.topDocs();
+      return ((TopDocsCollector<?>) in).topDocs();
     }
     
     public int freq(int doc) throws IOException {
       return docCounts.get(doc);
+    }
+    
+  }
+
+  public void testGetChildrenMinShouldMatchSumScorer() throws IOException {
+    final BooleanQuery query = new BooleanQuery();
+    query.add(new TermQuery(new Term(F2, "nutch")), Occur.SHOULD);
+    query.add(new TermQuery(new Term(F2, "web")), Occur.SHOULD);
+    query.add(new TermQuery(new Term(F2, "crawler")), Occur.SHOULD);
+    query.setMinimumNumberShouldMatch(2);
+    ScorerSummarizingCollector collector = new ScorerSummarizingCollector();
+    searcher.search(query, collector);
+    assertEquals(1, collector.getNumHits());
+    assertFalse(collector.getSummaries().isEmpty());
+    for (String summary : collector.getSummaries()) {
+      assertEquals(
+          "MinShouldMatchSumScorer\n" +
+          "    SHOULD TermScorer body:nutch\n" +
+          "    SHOULD TermScorer body:web\n" +
+          "    SHOULD TermScorer body:crawler", summary);
+    }
+  }
+
+  public void testGetChildrenBoosterScorer() throws IOException {
+    final BooleanQuery query = new BooleanQuery();
+    query.add(new TermQuery(new Term(F2, "nutch")), Occur.SHOULD);
+    query.add(new TermQuery(new Term(F2, "miss")), Occur.SHOULD);
+    ScorerSummarizingCollector collector = new ScorerSummarizingCollector();
+    searcher.search(query, collector);
+    assertEquals(1, collector.getNumHits());
+    assertFalse(collector.getSummaries().isEmpty());
+    for (String summary : collector.getSummaries()) {
+      assertEquals(
+          "BoostedScorer\n" +
+          "    BOOSTED TermScorer body:nutch", summary);
+    }
+  }
+
+  private static class ScorerSummarizingCollector implements Collector {
+    private final List<String> summaries = new ArrayList<>();
+    private int numHits[] = new int[1];
+
+    public int getNumHits() {
+      return numHits[0];
+    }
+
+    public List<String> getSummaries() {
+      return summaries;
+    }
+
+    @Override
+    public LeafCollector getLeafCollector(AtomicReaderContext context) throws IOException {
+      return new LeafCollector() {
+
+        @Override
+        public void setScorer(Scorer scorer) throws IOException {
+          final StringBuilder builder = new StringBuilder();
+          summarizeScorer(builder, scorer, 0);
+          summaries.add(builder.toString());
+        }
+
+        @Override
+        public void collect(int doc) throws IOException {
+          numHits[0]++;
+        }
+
+        @Override
+        public boolean acceptsDocsOutOfOrder() {
+          return false;
+        }
+      };
+    }
+
+    private static void summarizeScorer(final StringBuilder builder, final Scorer scorer, final int indent) {
+      builder.append(scorer.getClass().getSimpleName());
+      if (scorer instanceof TermScorer) {
+        TermQuery termQuery = (TermQuery) scorer.getWeight().getQuery();
+        builder.append(" ").append(termQuery.getTerm().field()).append(":").append(termQuery.getTerm().text());
+      }
+      for (final ChildScorer childScorer : scorer.getChildren()) {
+        indent(builder, indent + 1).append(childScorer.relationship).append(" ");
+        summarizeScorer(builder, childScorer.child, indent + 2);
+      }
+    }
+
+    private static StringBuilder indent(final StringBuilder builder, final int indent) {
+      if (builder.length() != 0) {
+        builder.append("\n");
+      }
+      for (int i = 0; i < indent; i++) {
+        builder.append("    ");
+      }
+      return builder;
     }
   }
 }

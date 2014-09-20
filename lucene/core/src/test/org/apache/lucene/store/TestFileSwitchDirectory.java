@@ -17,32 +17,33 @@ package org.apache.lucene.store;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.codecs.Codec;
-import org.apache.lucene.codecs.lucene40.Lucene40StoredFieldsWriter;
+import org.apache.lucene.codecs.compressing.CompressingStoredFieldsWriter;
 import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexNotFoundException;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.TestIndexWriterReader;
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.IOUtils;
 
-public class TestFileSwitchDirectory extends LuceneTestCase {
+public class TestFileSwitchDirectory extends BaseDirectoryTestCase {
+
   /**
    * Test if writing doc stores to disk and everything else to ram works.
    */
   public void testBasic() throws IOException {
     Set<String> fileExtensions = new HashSet<>();
-    fileExtensions.add(Lucene40StoredFieldsWriter.FIELDS_EXTENSION);
-    fileExtensions.add(Lucene40StoredFieldsWriter.FIELDS_INDEX_EXTENSION);
+    fileExtensions.add(CompressingStoredFieldsWriter.FIELDS_EXTENSION);
+    fileExtensions.add(CompressingStoredFieldsWriter.FIELDS_INDEX_EXTENSION);
     
     MockDirectoryWrapper primaryDir = new MockDirectoryWrapper(random(), new RAMDirectory());
     primaryDir.setCheckIndexOnClose(false); // only part of an index
@@ -50,13 +51,11 @@ public class TestFileSwitchDirectory extends LuceneTestCase {
     secondaryDir.setCheckIndexOnClose(false); // only part of an index
     
     FileSwitchDirectory fsd = new FileSwitchDirectory(fileExtensions, primaryDir, secondaryDir, true);
-    // for now we wire Lucene40Codec because we rely upon its specific impl
-    boolean oldValue = OLD_FORMAT_IMPERSONATION_IS_ACTIVE;
-    OLD_FORMAT_IMPERSONATION_IS_ACTIVE = true;
+    // for now we wire Lucene410Codec because we rely upon its specific impl
     IndexWriter writer = new IndexWriter(
         fsd,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).
-            setMergePolicy(newLogMergePolicy(false)).setCodec(Codec.forName("Lucene40")).setUseCompoundFile(false)
+        new IndexWriterConfig(new MockAnalyzer(random())).
+            setMergePolicy(newLogMergePolicy(false)).setCodec(Codec.forName("Lucene410")).setUseCompoundFile(false)
     );
     TestIndexWriterReader.createIndexNoClose(true, "ram", writer);
     IndexReader reader = DirectoryReader.open(writer, true);
@@ -84,88 +83,56 @@ public class TestFileSwitchDirectory extends LuceneTestCase {
       assertNotNull(files[i]);
     }
     fsd.close();
-    OLD_FORMAT_IMPERSONATION_IS_ACTIVE = oldValue;
   }
   
   private Directory newFSSwitchDirectory(Set<String> primaryExtensions) throws IOException {
-    File primDir = TestUtil.getTempDir("foo");
-    File secondDir = TestUtil.getTempDir("bar");
+    Path primDir = createTempDir("foo");
+    Path secondDir = createTempDir("bar");
     return newFSSwitchDirectory(primDir, secondDir, primaryExtensions);
   }
 
-  private Directory newFSSwitchDirectory(File aDir, File bDir, Set<String> primaryExtensions) throws IOException {
+  private Directory newFSSwitchDirectory(Path aDir, Path bDir, Set<String> primaryExtensions) throws IOException {
     Directory a = new SimpleFSDirectory(aDir);
     Directory b = new SimpleFSDirectory(bDir);
-    FileSwitchDirectory switchDir = new FileSwitchDirectory(primaryExtensions, a, b, true);
-    return new MockDirectoryWrapper(random(), switchDir);
+    return new FileSwitchDirectory(primaryExtensions, a, b, true);
   }
   
   // LUCENE-3380 -- make sure we get exception if the directory really does not exist.
   public void testNoDir() throws Throwable {
-    File primDir = TestUtil.getTempDir("foo");
-    File secondDir = TestUtil.getTempDir("bar");
-    TestUtil.rmDir(primDir);
-    TestUtil.rmDir(secondDir);
+    Path primDir = createTempDir("foo");
+    Path secondDir = createTempDir("bar");
+    IOUtils.rm(primDir, secondDir);
     Directory dir = newFSSwitchDirectory(primDir, secondDir, Collections.<String>emptySet());
     try {
       DirectoryReader.open(dir);
       fail("did not hit expected exception");
-    } catch (NoSuchDirectoryException nsde) {
+    } catch (IndexNotFoundException nsde) {
       // expected
     }
     dir.close();
   }
-  
-  // LUCENE-3380 test that we can add a file, and then when we call list() we get it back
-  public void testDirectoryFilter() throws IOException {
-    Directory dir = newFSSwitchDirectory(Collections.<String>emptySet());
-    String name = "file";
-    try {
-      dir.createOutput(name, newIOContext(random())).close();
-      assertTrue(dir.fileExists(name));
-      assertTrue(Arrays.asList(dir.listAll()).contains(name));
-    } finally {
-      dir.close();
-    }
-  }
-  
-  // LUCENE-3380 test that delegate compound files correctly.
-  public void testCompoundFileAppendTwice() throws IOException {
-    Directory newDir = newFSSwitchDirectory(Collections.singleton("cfs"));
-    CompoundFileDirectory csw = new CompoundFileDirectory(newDir, "d.cfs", newIOContext(random()), true);
-    createSequenceFile(newDir, "d1", (byte) 0, 15);
-    IndexOutput out = csw.createOutput("d.xyz", newIOContext(random()));
-    out.writeInt(0);
-    try {
-      newDir.copy(csw, "d1", "d1", newIOContext(random()));
-      fail("file does already exist");
-    } catch (IllegalArgumentException e) {
-      //
-    }
-    out.close();
-    assertEquals(1, csw.listAll().length);
-    assertEquals("d.xyz", csw.listAll()[0]);
-   
-    csw.close();
 
-    CompoundFileDirectory cfr = new CompoundFileDirectory(newDir, "d.cfs", newIOContext(random()), false);
-    assertEquals(1, cfr.listAll().length);
-    assertEquals("d.xyz", cfr.listAll()[0]);
-    cfr.close();
-    newDir.close();
+  @Override
+  protected Directory getDirectory(Path path) throws IOException {
+    Set<String> extensions = new HashSet<String>();
+    if (random().nextBoolean()) {
+      extensions.add("cfs");
+    }
+    if (random().nextBoolean()) {
+      extensions.add("prx");
+    }
+    if (random().nextBoolean()) {
+      extensions.add("frq");
+    }
+    if (random().nextBoolean()) {
+      extensions.add("tip");
+    }
+    if (random().nextBoolean()) {
+      extensions.add("tim");
+    }
+    if (random().nextBoolean()) {
+      extensions.add("del");
+    }
+    return newFSSwitchDirectory(extensions);
   }
-  
-  /** Creates a file of the specified size with sequential data. The first
-   *  byte is written as the start byte provided. All subsequent bytes are
-   *  computed as start + offset where offset is the number of the byte.
-   */
-  private void createSequenceFile(Directory dir, String name, byte start, int size) throws IOException {
-      IndexOutput os = dir.createOutput(name, newIOContext(random()));
-      for (int i=0; i < size; i++) {
-          os.writeByte(start);
-          start ++;
-      }
-      os.close();
-  }
-
 }

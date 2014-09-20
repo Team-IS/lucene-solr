@@ -17,16 +17,26 @@ package org.apache.solr.core;
  * limitations under the License.
  */
 
+import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
+import java.util.Locale;
 
 import org.apache.hadoop.conf.Configuration;
+
+import static org.apache.hadoop.fs.CommonConfigurationKeys.HADOOP_SECURITY_AUTHENTICATION;
+
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.LockFactory;
 import org.apache.lucene.store.NRTCachingDirectory;
+import org.apache.lucene.store.NativeFSLockFactory;
+import org.apache.lucene.store.NoLockFactory;
+import org.apache.lucene.store.SimpleFSLockFactory;
+import org.apache.lucene.store.SingleInstanceLockFactory;
 import org.apache.solr.cloud.ZkController;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
@@ -39,6 +49,7 @@ import org.apache.solr.store.blockcache.BufferStore;
 import org.apache.solr.store.blockcache.Cache;
 import org.apache.solr.store.blockcache.Metrics;
 import org.apache.solr.store.hdfs.HdfsDirectory;
+import org.apache.solr.store.hdfs.HdfsLockFactory;
 import org.apache.solr.util.HdfsUtil;
 import org.apache.solr.util.IOUtils;
 import org.slf4j.Logger;
@@ -85,6 +96,8 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory {
     this.hdfsDataDir = params.get(HDFS_HOME);
     if (this.hdfsDataDir != null && this.hdfsDataDir.length() == 0) {
       this.hdfsDataDir = null;
+    } else {
+      LOG.info(HDFS_HOME + "=" + this.hdfsDataDir);
     }
     boolean kerberosEnabled = params.getBool(KERBEROS_ENABLED, false);
     LOG.info("Solr Kerberos Authentication "
@@ -95,8 +108,27 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory {
   }
   
   @Override
-  protected Directory create(String path, DirContext dirContext)
-      throws IOException {
+  protected LockFactory createLockFactory(String lockPath, String rawLockType) throws IOException {
+    if (null == rawLockType) {
+      LOG.warn("No lockType configured, assuming 'hdfs'.");
+      rawLockType = "hdfs";
+    }
+    final String lockType = rawLockType.toLowerCase(Locale.ROOT).trim();
+    switch (lockType) {
+      case "hdfs":
+        return new HdfsLockFactory(new Path(lockPath), getConf());
+      case "single":
+        return new SingleInstanceLockFactory();
+      case "none":
+        return NoLockFactory.getNoLockFactory();
+      default:
+        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR,
+            "Unrecognized lockType: " + rawLockType);
+    }
+  }
+
+  @Override
+  protected Directory create(String path, LockFactory lockFactory, DirContext dirContext) throws IOException {
     LOG.info("creating directory factory for path {}", path);
     Configuration conf = getConf();
     
@@ -106,11 +138,14 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory {
     
     boolean blockCacheEnabled = params.getBool(BLOCKCACHE_ENABLED, true);
     boolean blockCacheGlobal = params.getBool(BLOCKCACHE_GLOBAL, false); // default to false for back compat
-    boolean blockCacheReadEnabled = params.getBool(BLOCKCACHE_READ_ENABLED,
-        true);
-    boolean blockCacheWriteEnabled = params.getBool(BLOCKCACHE_WRITE_ENABLED, true);
-    Directory dir = null;
+    boolean blockCacheReadEnabled = params.getBool(BLOCKCACHE_READ_ENABLED, true);
+    boolean blockCacheWriteEnabled = params.getBool(BLOCKCACHE_WRITE_ENABLED, false);
     
+    if (blockCacheWriteEnabled) {
+      LOG.warn("Using " + BLOCKCACHE_WRITE_ENABLED + " is currently buggy and can result in readers seeing a corrupted view of the index.");
+    }
+    
+    final Directory dir;
     if (blockCacheEnabled && dirContext != DirContext.META_DATA) {
       int numberOfBlocksPerBank = params.getInt(NUMBEROFBLOCKSPERBANK, 16384);
       
@@ -133,16 +168,16 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory {
       int bufferSize = params.getInt("solr.hdfs.blockcache.bufferstore.buffersize", 128);
       int bufferCount = params.getInt("solr.hdfs.blockcache.bufferstore.buffercount", 128 * 128);
       
-      BlockCache blockCache = getBlockDirectoryCache(path, numberOfBlocksPerBank,
+      BlockCache blockCache = getBlockDirectoryCache(numberOfBlocksPerBank,
           blockSize, bankCount, directAllocation, slabSize,
           bufferSize, bufferCount, blockCacheGlobal);
       
-      Cache cache = new BlockDirectoryCache(blockCache, path, metrics);
-      HdfsDirectory hdfsDirectory = new HdfsDirectory(new Path(path), conf);
+      Cache cache = new BlockDirectoryCache(blockCache, path, metrics, blockCacheGlobal);
+      HdfsDirectory hdfsDirectory = new HdfsDirectory(new Path(path), lockFactory, conf);
       dir = new BlockDirectory(path, hdfsDirectory, cache, null,
           blockCacheReadEnabled, blockCacheWriteEnabled);
     } else {
-      dir = new HdfsDirectory(new Path(path), conf);
+      dir = new HdfsDirectory(new Path(path), lockFactory, conf);
     }
     
     boolean nrtCachingDirectory = params.getBool(NRTCACHINGDIRECTORY_ENABLE, true);
@@ -158,17 +193,16 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory {
     return dir;
   }
 
-  private BlockCache getBlockDirectoryCache(String path,
-      int numberOfBlocksPerBank, int blockSize, int bankCount,
+  private BlockCache getBlockDirectoryCache(int numberOfBlocksPerBank, int blockSize, int bankCount,
       boolean directAllocation, int slabSize, int bufferSize, int bufferCount, boolean staticBlockCache) {
     if (!staticBlockCache) {
       LOG.info("Creating new single instance HDFS BlockCache");
       return createBlockCache(numberOfBlocksPerBank, blockSize, bankCount, directAllocation, slabSize, bufferSize, bufferCount);
     }
-    LOG.info("Creating new global HDFS BlockCache");
     synchronized (HdfsDirectoryFactory.class) {
       
       if (globalBlockCache == null) {
+        LOG.info("Creating new global HDFS BlockCache");
         globalBlockCache = createBlockCache(numberOfBlocksPerBank, blockSize, bankCount,
             directAllocation, slabSize, bufferSize, bufferCount);
       }
@@ -250,6 +284,11 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory {
   }
   
   @Override
+  public boolean isSharedStorage() {
+    return true;
+  }
+  
+  @Override
   public boolean searchersReserveCommitPoints() {
     return true;
   }
@@ -300,9 +339,18 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory {
     synchronized (HdfsDirectoryFactory.class) {
       if (kerberosInit == null) {
         kerberosInit = new Boolean(true);
-        Configuration conf = new Configuration();
-        conf.set("hadoop.security.authentication", "kerberos");
-        UserGroupInformation.setConfiguration(conf);
+        final Configuration conf = getConf();
+        final String authVal = conf.get(HADOOP_SECURITY_AUTHENTICATION);
+        final String kerberos = "kerberos";
+        if (authVal != null && !authVal.equals(kerberos)) {
+          throw new IllegalArgumentException(HADOOP_SECURITY_AUTHENTICATION
+              + " set to: " + authVal + ", not kerberos, but attempting to "
+              + " connect to HDFS via kerberos");
+        }
+        // let's avoid modifying the supplied configuration, just to be conservative
+        final Configuration ugiConf = new Configuration(getConf());
+        ugiConf.set(HADOOP_SECURITY_AUTHENTICATION, kerberos);
+        UserGroupInformation.setConfiguration(ugiConf);
         LOG.info(
             "Attempting to acquire kerberos ticket with keytab: {}, principal: {} ",
             keytabFile, principal);

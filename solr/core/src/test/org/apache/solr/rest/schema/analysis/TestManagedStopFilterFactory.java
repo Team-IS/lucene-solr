@@ -44,9 +44,7 @@ public class TestManagedStopFilterFactory extends RestTestBase {
 
   @Before
   public void before() throws Exception {
-    createTempDir();
-    tmpSolrHome = new File(TEMP_DIR + File.separator + TestManagedStopFilterFactory.class.getSimpleName()
-                          + System.currentTimeMillis());
+    tmpSolrHome = createTempDir().toFile();
     tmpConfDir = new File(tmpSolrHome, confDir);
     FileUtils.copyDirectory(new File(TEST_HOME()), tmpSolrHome.getAbsoluteFile());
 
@@ -66,7 +64,6 @@ public class TestManagedStopFilterFactory extends RestTestBase {
   private void after() throws Exception {
     jetty.stop();
     jetty = null;
-    FileUtils.deleteDirectory(tmpSolrHome);
     System.clearProperty("managed.schema.mutable");
     System.clearProperty("enable.update.log");
   }
@@ -187,5 +184,30 @@ public class TestManagedStopFilterFactory extends RestTestBase {
     
     // should fail with 404 as foo doesn't exist
     assertJDelete(endpoint + "/foo", "/error/code==404");
+  }
+
+  /**
+   * Can we add and remove stopwords with umlauts
+   */
+  @Test
+  public void testCanHandleDecodingAndEncodingForStopwords() throws Exception  {
+    String endpoint = "/schema/analysis/stopwords/german";
+
+    //initially it should not exist
+    assertJQ(endpoint + "/schön", "/error/code==404");
+
+    //now we put a stopword with an umlaut
+    assertJPut(endpoint,
+        JSONUtil.toJSON(Arrays.asList("schön")),
+        "/responseHeader/status==0");
+
+    //let's check if it exists
+    assertJQ(endpoint + "/schön", "/schön=='schön'");
+
+    //now let's remove it
+    assertJDelete(endpoint + "/schön", "/responseHeader/status==0");
+
+    //and of it is unavailable again
+    assertJQ(endpoint + "/schön", "/error/code==404");
   }
 }

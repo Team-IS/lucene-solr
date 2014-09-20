@@ -17,8 +17,6 @@ package org.apache.solr.cloud;
  * the License.
  */
 
-import java.io.File;
-
 import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.cloud.ConnectionManager;
@@ -36,10 +34,8 @@ public class ConnectionManagerTest extends SolrTestCaseJ4 {
   @Ignore
   public void testConnectionManager() throws Exception {
     
-    createTempDir();
     // setup a SolrZkClient to do some getBaseUrlForNodeName testing
-    String zkDir = dataDir.getAbsolutePath() + File.separator
-        + "zookeeper/server1/data";
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     
     ZkTestServer server = new ZkTestServer(zkDir);
     try {
@@ -51,10 +47,9 @@ public class ConnectionManagerTest extends SolrTestCaseJ4 {
       SolrZkClient zkClient = new SolrZkClient(server.getZkAddress(), TIMEOUT);
       ConnectionManager cm = zkClient.getConnectionManager();
       try {
-        System.err.println("ISEXPIRED:" + cm.isLikelyExpired());
         assertFalse(cm.isLikelyExpired());
-        
-        zkClient.getSolrZooKeeper().pauseCnxn(TIMEOUT);
+
+        zkClient.getSolrZooKeeper().closeCnxn();
         
         long sessionId = zkClient.getSolrZooKeeper().getSessionId();
         server.expire(sessionId);
@@ -72,10 +67,8 @@ public class ConnectionManagerTest extends SolrTestCaseJ4 {
 
   public void testLikelyExpired() throws Exception {
 
-    createTempDir();
     // setup a SolrZkClient to do some getBaseUrlForNodeName testing
-    String zkDir = dataDir.getAbsolutePath() + File.separator
-        + "zookeeper/server1/data";
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
 
     ZkTestServer server = new ZkTestServer(zkDir);
     try {

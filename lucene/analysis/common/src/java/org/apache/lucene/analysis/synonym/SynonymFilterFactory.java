@@ -17,13 +17,13 @@ package org.apache.lucene.analysis.synonym;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -133,8 +133,8 @@ public class SynonymFilterFactory extends TokenFilterFactory implements Resource
       analyzer = new Analyzer() {
         @Override
         protected TokenStreamComponents createComponents(String fieldName) {
-          Tokenizer tokenizer = factory == null ? new WhitespaceTokenizer(Version.LUCENE_CURRENT) : factory.create();
-          TokenStream stream = ignoreCase ? new LowerCaseFilter(Version.LUCENE_CURRENT, tokenizer) : tokenizer;
+          Tokenizer tokenizer = factory == null ? new WhitespaceTokenizer() : factory.create();
+          TokenStream stream = ignoreCase ? new LowerCaseFilter(tokenizer) : tokenizer;
           return new TokenStreamComponents(tokenizer, stream);
         }
       };
@@ -157,8 +157,8 @@ public class SynonymFilterFactory extends TokenFilterFactory implements Resource
   /**
    * Load synonyms with the given {@link SynonymMap.Parser} class.
    */
-  private SynonymMap loadSynonyms(ResourceLoader loader, String cname, boolean dedup, Analyzer analyzer) throws IOException, ParseException {
-    CharsetDecoder decoder = Charset.forName("UTF-8").newDecoder()
+  protected SynonymMap loadSynonyms(ResourceLoader loader, String cname, boolean dedup, Analyzer analyzer) throws IOException, ParseException {
+    CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
         .onMalformedInput(CodingErrorAction.REPORT)
         .onUnmappableCharacter(CodingErrorAction.REPORT);
 
@@ -170,16 +170,10 @@ public class SynonymFilterFactory extends TokenFilterFactory implements Resource
       throw new RuntimeException(e);
     }
 
-    File synonymFile = new File(synonyms);
-    if (synonymFile.exists()) {
+    List<String> files = splitFileNames(synonyms);
+    for (String file : files) {
       decoder.reset();
-      parser.parse(new InputStreamReader(loader.openResource(synonyms), decoder));
-    } else {
-      List<String> files = splitFileNames(synonyms);
-      for (String file : files) {
-        decoder.reset();
-        parser.parse(new InputStreamReader(loader.openResource(file), decoder));
-      }
+      parser.parse(new InputStreamReader(loader.openResource(file), decoder));
     }
     return parser.build();
   }
@@ -201,7 +195,7 @@ public class SynonymFilterFactory extends TokenFilterFactory implements Resource
   private Analyzer loadAnalyzer(ResourceLoader loader, String cname) throws IOException {
     Class<? extends Analyzer> clazz = loader.findClass(cname, Analyzer.class);
     try {
-      Analyzer analyzer = clazz.getConstructor(Version.class).newInstance(Version.LUCENE_CURRENT);
+      Analyzer analyzer = clazz.getConstructor().newInstance();
       if (analyzer instanceof ResourceLoaderAware) {
         ((ResourceLoaderAware) analyzer).inform(loader);
       }

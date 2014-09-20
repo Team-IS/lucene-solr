@@ -34,6 +34,7 @@ import org.apache.solr.schema.*;
 import org.apache.solr.search.DocList;
 import org.apache.solr.search.ReturnFields;
 import org.apache.solr.search.SolrIndexSearcher;
+import org.apache.solr.search.SolrReturnFields;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -141,11 +142,19 @@ public class BinaryResponseWriter implements BinaryQueryResponseWriter {
       }
       
       Set<String> fnames = returnFields.getLuceneFieldNames();
+      boolean onlyPseudoFields = (fnames == null && !returnFields.wantsAllFields() && !returnFields.hasPatternMatching())
+          || (fnames != null && fnames.size() == 1 && SolrReturnFields.SCORE.equals(fnames.iterator().next()));
       context.iterator = ids.iterator();
       for (int i = 0; i < sz; i++) {
         int id = context.iterator.nextDoc();
-        StoredDocument doc = searcher.doc(id, fnames);
-        SolrDocument sdoc = getDoc(doc);
+        SolrDocument sdoc;
+        if (onlyPseudoFields) {
+          // no need to get stored fields of the document, see SOLR-5968
+          sdoc = new SolrDocument();
+        } else {
+          StoredDocument doc = searcher.doc(id, fnames);
+          sdoc = getDoc(doc);
+        }
         if( transformer != null ) {
           transformer.transform(sdoc, id);
         }
@@ -178,9 +187,9 @@ public class BinaryResponseWriter implements BinaryQueryResponseWriter {
       SolrDocument solrDoc = new SolrDocument();
       for (StorableField f : doc) {
         String fieldName = f.name();
-        if( !returnFields.wantsField(fieldName) ) 
+        if( !returnFields.wantsField(fieldName) )
           continue;
-        
+
         SchemaField sf = schema.getFieldOrNull(fieldName);
         Object val = null;
         try {
@@ -256,18 +265,6 @@ public class BinaryResponseWriter implements BinaryQueryResponseWriter {
 
   static {
     KNOWN_TYPES.add(BoolField.class);
-    KNOWN_TYPES.add(BCDIntField.class);
-    KNOWN_TYPES.add(BCDLongField.class);
-    KNOWN_TYPES.add(BCDStrField.class);
-    KNOWN_TYPES.add(DateField.class);
-    KNOWN_TYPES.add(DoubleField.class);
-    KNOWN_TYPES.add(FloatField.class);
-    KNOWN_TYPES.add(IntField.class);
-    KNOWN_TYPES.add(LongField.class);
-    KNOWN_TYPES.add(SortableLongField.class);
-    KNOWN_TYPES.add(SortableIntField.class);
-    KNOWN_TYPES.add(SortableFloatField.class);
-    KNOWN_TYPES.add(SortableDoubleField.class);
     KNOWN_TYPES.add(StrField.class);
     KNOWN_TYPES.add(TextField.class);
     KNOWN_TYPES.add(TrieField.class);

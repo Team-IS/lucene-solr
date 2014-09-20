@@ -19,6 +19,7 @@ package org.apache.lucene.codecs.perfield;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Map;
@@ -35,7 +36,10 @@ import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
@@ -114,6 +118,11 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
     @Override
     public void addSortedField(FieldInfo field, Iterable<BytesRef> values, Iterable<Number> docToOrd) throws IOException {
       getInstance(field).addSortedField(field, values, docToOrd);
+    }
+
+    @Override
+    public void addSortedNumericField(FieldInfo field, Iterable<Number> docToValueCount, Iterable<Number> values) throws IOException {
+      getInstance(field).addSortedNumericField(field, docToValueCount, values);
     }
 
     @Override
@@ -214,7 +223,7 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
 
     public FieldsReader(final SegmentReadState readState) throws IOException {
 
-      // Read _X.per and init each format:
+      // Init each unique format:
       boolean success = false;
       try {
         // Read field name -> format name
@@ -280,6 +289,12 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
     }
 
     @Override
+    public SortedNumericDocValues getSortedNumeric(FieldInfo field) throws IOException {
+      DocValuesProducer producer = fields.get(field.name);
+      return producer == null ? null : producer.getSortedNumeric(field);
+    }
+
+    @Override
     public SortedSetDocValues getSortedSet(FieldInfo field) throws IOException {
       DocValuesProducer producer = fields.get(field.name);
       return producer == null ? null : producer.getSortedSet(field);
@@ -309,6 +324,23 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
             entry.getValue().ramBytesUsed();
       }
       return size;
+    }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Accountables.namedAccountables("format", formats);
+    }
+
+    @Override
+    public void checkIntegrity() throws IOException {
+      for (DocValuesProducer format : formats.values()) {
+        format.checkIntegrity();
+      }
+    }
+    
+    @Override
+    public String toString() {
+      return "PerFieldDocValues(formats=" + formats.size() + ")";
     }
   }
 

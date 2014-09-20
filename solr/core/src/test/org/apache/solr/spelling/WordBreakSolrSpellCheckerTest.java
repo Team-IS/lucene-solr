@@ -23,6 +23,7 @@ import java.util.Map;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.Token;
+import org.apache.lucene.util.LuceneTestCase.SuppressTempFileChecks;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.SolrCore;
@@ -32,6 +33,7 @@ import org.apache.solr.util.RefCounted;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+@SuppressTempFileChecks(bugUrl = "https://issues.apache.org/jira/browse/SOLR-1877 Spellcheck IndexReader leak bug?")
 public class WordBreakSolrSpellCheckerTest extends SolrTestCaseJ4 {
   
   @BeforeClass
@@ -74,7 +76,7 @@ public class WordBreakSolrSpellCheckerTest extends SolrTestCaseJ4 {
     searcher.decref();
     
     assertTrue(result != null && result.getSuggestions() != null);
-    assertTrue(result.getSuggestions().size()==6);
+    assertTrue(result.getSuggestions().size()==9);
     
     for(Map.Entry<Token, LinkedHashMap<String, Integer>> s : result.getSuggestions().entrySet()) {
       Token orig = s.getKey();
@@ -117,7 +119,28 @@ public class WordBreakSolrSpellCheckerTest extends SolrTestCaseJ4 {
         assertTrue(orig.length()==4);
         assertTrue(corr.length==1);
         assertTrue(corr[0].equals("pi ne"));
-      } else {
+      } else if(orig.toString().equals("pine")) {
+        assertTrue(orig.startOffset()==10);
+        assertTrue(orig.endOffset()==14);
+        assertTrue(orig.length()==4);
+        assertTrue(corr.length==1);
+        assertTrue(corr[0].equals("pi ne"));
+      } else if(orig.toString().equals("apple")) {
+        assertTrue(orig.startOffset()==15);
+        assertTrue(orig.endOffset()==20);
+        assertTrue(orig.length()==5);
+        assertTrue(corr.length==0);
+      } else if(orig.toString().equals("good")) {
+        assertTrue(orig.startOffset()==21);
+        assertTrue(orig.endOffset()==25);
+        assertTrue(orig.length()==4);
+        assertTrue(corr.length==0);
+      } else if(orig.toString().equals("ness")) {
+        assertTrue(orig.startOffset()==26);
+        assertTrue(orig.endOffset()==30);
+        assertTrue(orig.length()==4);
+        assertTrue(corr.length==0);
+      }else {
         fail("Unexpected original result: " + orig);
       }        
     }  

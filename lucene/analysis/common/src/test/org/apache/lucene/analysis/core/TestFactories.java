@@ -35,7 +35,8 @@ import org.apache.lucene.analysis.util.ResourceLoaderAware;
 import org.apache.lucene.analysis.util.StringMockResourceLoader;
 import org.apache.lucene.analysis.util.TokenFilterFactory;
 import org.apache.lucene.analysis.util.TokenizerFactory;
-import org.apache.lucene.util.AttributeSource.AttributeFactory;
+import org.apache.lucene.util.AttributeFactory;
+import org.apache.lucene.util.Version;
 
 /**
  * Sanity check some things about all factories,
@@ -123,7 +124,7 @@ public class TestFactories extends BaseTokenStreamTestCase {
   /** tries to initialize a factory with no arguments */
   private AbstractAnalysisFactory initialize(Class<? extends AbstractAnalysisFactory> factoryClazz) throws IOException {
     Map<String,String> args = new HashMap<>();
-    args.put("luceneMatchVersion", TEST_VERSION_CURRENT.toString());
+    args.put("luceneMatchVersion", Version.LATEST.toString());
     Constructor<? extends AbstractAnalysisFactory> ctor;
     try {
       ctor = factoryClazz.getConstructor(Map.class);
@@ -179,7 +180,7 @@ public class TestFactories extends BaseTokenStreamTestCase {
 
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      Tokenizer tf = tokenizer.create();
+      Tokenizer tf = tokenizer.create(newAttributeFactory());
       if (tokenfilter != null) {
         return new TokenStreamComponents(tf, tokenfilter.create(tf));
       } else {

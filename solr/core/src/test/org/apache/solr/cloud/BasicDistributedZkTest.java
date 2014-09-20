@@ -17,9 +17,7 @@ package org.apache.solr.cloud;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
-import java.net.MalformedURLException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -38,8 +36,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.lucene.util.LuceneTestCase.Slow;
-import org.apache.solr.SolrTestCaseJ4.SuppressSSL;
 import org.apache.solr.JSONTestUtil;
+import org.apache.solr.SolrTestCaseJ4.SuppressSSL;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.SolrServer;
@@ -84,22 +82,12 @@ public class BasicDistributedZkTest extends AbstractFullDistribZkTestBase {
   private static final String DEFAULT_COLLECTION = "collection1";
   protected static final boolean DEBUG = false;
   String t1="a_t";
-  String i1="a_si";
-  String nint = "n_i";
-  String tint = "n_ti";
-  String nfloat = "n_f";
-  String tfloat = "n_tf";
-  String ndouble = "n_d";
-  String tdouble = "n_td";
-  String nlong = "n_l";
+  String i1="a_i1";
   String tlong = "other_tl1";
-  String ndate = "n_dt";
-  String tdate = "n_tdt";
-  
+
   String oddField="oddField_s";
   String missingField="ignore_exception__missing_but_valid_field_t";
-  String invalidField="ignore_exception__invalid_field_not_in_schema";
-  
+
   private Map<String,List<SolrServer>> otherCollectionClients = new HashMap<>();
 
   private String oneInstanceCollection = "oneInstanceCollection";
@@ -167,7 +155,6 @@ public class BasicDistributedZkTest extends AbstractFullDistribZkTestBase {
     waitForRecoveriesToFinish(false);
     
     handle.clear();
-    handle.put("QTime", SKIPVAL);
     handle.put("timestamp", SKIPVAL);
 
     del("*:*");
@@ -355,7 +342,7 @@ public class BasicDistributedZkTest extends AbstractFullDistribZkTestBase {
     }
     
     for (SolrServer client : clients) {
-      assertEquals("commitWithin did not work", before + 1, client.query(new SolrQuery("*:*")).getResults().getNumFound());
+      assertEquals("commitWithin did not work on node: " + ((HttpSolrServer)client).getBaseURL(), before + 1, client.query(new SolrQuery("*:*")).getResults().getNumFound());
     }
     
     // TODO: This test currently fails because debug info is obtained only
@@ -388,8 +375,7 @@ public class BasicDistributedZkTest extends AbstractFullDistribZkTestBase {
     Create createCmd = new Create();
     createCmd.setCoreName("core1");
     createCmd.setCollection("the_core_collection");
-    String coredataDir = dataDir.getAbsolutePath() + File.separator
-        + System.currentTimeMillis() + "the_core_collection";
+    String coredataDir = createTempDir().toFile().getAbsolutePath();
     createCmd.setDataDir(coredataDir);
     createCmd.setNumShards(1);
     createCmd.setSchemaName("nonexistent_schema.xml");
@@ -569,8 +555,7 @@ public class BasicDistributedZkTest extends AbstractFullDistribZkTestBase {
 
           createCmd.setNumShards(numShards);
           try {
-            String core3dataDir = dataDir.getAbsolutePath() + File.separator
-                + System.currentTimeMillis() + collection + "_3n" + freezeI;
+            String core3dataDir = createTempDir(collection).toFile().getAbsolutePath();
             createCmd.setDataDir(getDataDir(core3dataDir));
 
             server.request(createCmd);
@@ -601,8 +586,8 @@ public class BasicDistributedZkTest extends AbstractFullDistribZkTestBase {
     params.set("action", CollectionAction.CREATE.toString());
 
     params.set(OverseerCollectionProcessor.NUM_SLICES, numShards);
-    params.set(OverseerCollectionProcessor.REPLICATION_FACTOR, numReplicas);
-    params.set(OverseerCollectionProcessor.MAX_SHARDS_PER_NODE, maxShardsPerNode);
+    params.set(ZkStateReader.REPLICATION_FACTOR, numReplicas);
+    params.set(ZkStateReader.MAX_SHARDS_PER_NODE, maxShardsPerNode);
     if (createNodeSetStr != null) params.set(OverseerCollectionProcessor.CREATE_NODE_SET, createNodeSetStr);
 
     int clientIndex = clients.size() > 1 ? random().nextInt(2) : 0;
@@ -982,8 +967,7 @@ public class BasicDistributedZkTest extends AbstractFullDistribZkTestBase {
           if (shardId == null) {
             createCmd.setNumShards(2);
           }
-          createCmd.setDataDir(getDataDir(dataDir.getAbsolutePath() + File.separator
-              + collection + num));
+          createCmd.setDataDir(getDataDir(createTempDir(collection).toFile().getAbsolutePath()));
           if (shardId != null) {
             createCmd.setShardId(shardId);
           }
@@ -1110,11 +1094,8 @@ public class BasicDistributedZkTest extends AbstractFullDistribZkTestBase {
             server.setSoTimeout(60000);
             Create createCmd = new Create();
             createCmd.setCoreName(collection);
-            createCmd.setDataDir(getDataDir(dataDir.getAbsolutePath() + File.separator
-                + collection + frozeUnique));
-
+            createCmd.setDataDir(getDataDir(createTempDir(collection).toFile().getAbsolutePath()));
             server.request(createCmd);
-
           } catch (Exception e) {
             e.printStackTrace();
             //fails
@@ -1156,16 +1137,12 @@ public class BasicDistributedZkTest extends AbstractFullDistribZkTestBase {
   protected CloudSolrServer getCommonCloudSolrServer() {
     if (commondCloudSolrServer == null) {
       synchronized(this) {
-        try {
-          commondCloudSolrServer = new CloudSolrServer(zkServer.getZkAddress(), random().nextBoolean());
-          commondCloudSolrServer.setParallelUpdates(random().nextBoolean());
-          commondCloudSolrServer.setDefaultCollection(DEFAULT_COLLECTION);
-          commondCloudSolrServer.getLbServer().setConnectionTimeout(15000);
-          commondCloudSolrServer.getLbServer().setSoTimeout(30000);
-          commondCloudSolrServer.connect();
-        } catch (MalformedURLException e) {
-          throw new RuntimeException(e);
-        }
+        commondCloudSolrServer = new CloudSolrServer(zkServer.getZkAddress(), random().nextBoolean());
+        commondCloudSolrServer.setParallelUpdates(random().nextBoolean());
+        commondCloudSolrServer.setDefaultCollection(DEFAULT_COLLECTION);
+        commondCloudSolrServer.getLbServer().setConnectionTimeout(15000);
+        commondCloudSolrServer.getLbServer().setSoTimeout(30000);
+        commondCloudSolrServer.connect();
       }
     }
     return commondCloudSolrServer;

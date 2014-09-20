@@ -27,6 +27,7 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -237,12 +238,10 @@ public abstract class AbstractAnalysisFactory {
     if (files.size() > 0) {
       // default stopwords list has 35 or so words, but maybe don't make it that
       // big to start
-      words = new CharArraySet(luceneMatchVersion,
-          files.size() * 10, ignoreCase);
+      words = new CharArraySet(files.size() * 10, ignoreCase);
       for (String file : files) {
         List<String> wlist = getLines(loader, file.trim());
-        words.addAll(StopFilter.makeStopSet(luceneMatchVersion, wlist,
-            ignoreCase));
+        words.addAll(StopFilter.makeStopSet(wlist, ignoreCase));
       }
     }
     return words;
@@ -252,7 +251,7 @@ public abstract class AbstractAnalysisFactory {
    * Returns the resource's lines (with content treated as UTF-8)
    */
   protected final List<String> getLines(ResourceLoader loader, String resource) throws IOException {
-    return WordlistLoader.getLines(loader.openResource(resource), IOUtils.CHARSET_UTF_8);
+    return WordlistLoader.getLines(loader.openResource(resource), StandardCharsets.UTF_8);
   }
 
   /** same as {@link #getWordSet(ResourceLoader, String, boolean)},
@@ -265,14 +264,13 @@ public abstract class AbstractAnalysisFactory {
     if (files.size() > 0) {
       // default stopwords list has 35 or so words, but maybe don't make it that
       // big to start
-      words = new CharArraySet(luceneMatchVersion,
-          files.size() * 10, ignoreCase);
+      words = new CharArraySet(files.size() * 10, ignoreCase);
       for (String file : files) {
         InputStream stream = null;
         Reader reader = null;
         try {
           stream = loader.openResource(file.trim());
-          CharsetDecoder decoder = IOUtils.CHARSET_UTF_8.newDecoder()
+          CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
               .onMalformedInput(CodingErrorAction.REPORT)
               .onUnmappableCharacter(CodingErrorAction.REPORT);
           reader = new InputStreamReader(stream, decoder);

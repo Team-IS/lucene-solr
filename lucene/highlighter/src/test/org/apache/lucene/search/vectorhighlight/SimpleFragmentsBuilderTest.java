@@ -148,8 +148,7 @@ public class SimpleFragmentsBuilderTest extends AbstractTestCase {
   }
   
   protected void makeUnstoredIndex() throws Exception {
-    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(
-        TEST_VERSION_CURRENT, analyzerW).setOpenMode(OpenMode.CREATE));
+    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(analyzerW).setOpenMode(OpenMode.CREATE));
     Document doc = new Document();
     FieldType customType = new FieldType(TextField.TYPE_NOT_STORED);
     customType.setStoreTermVectors(true);
@@ -237,8 +236,7 @@ public class SimpleFragmentsBuilderTest extends AbstractTestCase {
     RandomIndexWriter writer = new RandomIndexWriter(
         random(),
         dir,
-        newIndexWriterConfig(TEST_VERSION_CURRENT,
-            new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
+        newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
 
     FieldType customType = new FieldType(TextField.TYPE_STORED);
     customType.setStoreTermVectors(true);

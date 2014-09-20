@@ -24,16 +24,14 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.SimpleFSDirectory;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
 
-import java.io.File;
 import java.io.IOException;
-
-import static org.apache.lucene.store.TestHelper.isSimpleFSIndexInput;
-import static org.apache.lucene.store.TestHelper.isSimpleFSIndexInputOpen;
+import java.nio.file.Path;
 
 public class TestCompoundFile extends LuceneTestCase
 {
@@ -42,7 +40,7 @@ public class TestCompoundFile extends LuceneTestCase
     @Override
     public void setUp() throws Exception {
        super.setUp();
-       File file = TestUtil.getTempDir("testIndex");
+       Path file = createTempDir("testIndex");
        // use a simple FSDir here, to be sure to have SimpleFSInputs
        dir = new SimpleFSDirectory(file,null);
     }
@@ -343,10 +341,6 @@ public class TestCompoundFile extends LuceneTestCase
 
         // basic clone
         IndexInput expected = dir.openInput("f11", newIOContext(random()));
-
-        // this test only works for FSIndexInput
-        assertTrue(isSimpleFSIndexInput(expected));
-        assertTrue(isSimpleFSIndexInputOpen(expected));
 
         IndexInput one = cr.openInput("f11", newIOContext(random()));
 
@@ -682,12 +676,6 @@ public class TestCompoundFile extends LuceneTestCase
     createSequenceFile(newDir, "d1", (byte) 0, 15);
     IndexOutput out = csw.createOutput("d.xyz", newIOContext(random()));
     out.writeInt(0);
-    try {
-      newDir.copy(csw, "d1", "d1", newIOContext(random()));
-      fail("file does already exist");
-    } catch (IllegalArgumentException e) {
-      //
-    }
     out.close();
     assertEquals(1, csw.listAll().length);
     assertEquals("d.xyz", csw.listAll()[0]);
@@ -715,6 +703,10 @@ public class TestCompoundFile extends LuceneTestCase
   
   public void testReadNestedCFP() throws IOException {
     Directory newDir = newDirectory();
+    // manually manipulates directory
+    if (newDir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)newDir).setEnableVirusScanner(false);
+    }
     CompoundFileDirectory csw = new CompoundFileDirectory(newDir, "d.cfs", newIOContext(random()), true);
     CompoundFileDirectory nested = new CompoundFileDirectory(newDir, "b.cfs", newIOContext(random()), true);
     IndexOutput out = nested.createOutput("b.xyz", newIOContext(random()));
@@ -775,7 +767,7 @@ public class TestCompoundFile extends LuceneTestCase
   // when reading a CFS with many subs:
   public void testManySubFiles() throws IOException {
 
-    final Directory d = newFSDirectory(TestUtil.getTempDir("CFSManySubFiles"));
+    final Directory d = newFSDirectory(createTempDir("CFSManySubFiles"));
     final int FILE_COUNT = atLeast(500);
 
     for(int fileIdx=0;fileIdx<FILE_COUNT;fileIdx++) {
@@ -810,6 +802,11 @@ public class TestCompoundFile extends LuceneTestCase
   
   public void testListAll() throws Exception {
     Directory dir = newDirectory();
+    if (dir instanceof MockDirectoryWrapper) {
+      // test lists files manually and tries to verify every .cfs it finds,
+      // but a virus scanner could leave some trash.
+      ((MockDirectoryWrapper)dir).setEnableVirusScanner(false);
+    }
     // riw should sometimes create docvalues fields, etc
     RandomIndexWriter riw = new RandomIndexWriter(random(), dir);
     Document doc = new Document();
